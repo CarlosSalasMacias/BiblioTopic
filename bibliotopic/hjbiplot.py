@@ -69,3 +69,24 @@ def make_periods(years: pd.Series, width=5, min_share=0.05) -> pd.Series:
                 return l
         return labels[-1]
     return y.map(lab), labels
+
+
+def clusters(coords, kmax=5, min_n=4):
+    """Conglomerados jerárquicos (Ward) sobre las coordenadas del biplot; k elegido por silueta.
+    Devuelve (etiquetas 0..k-1, k, silueta) o (None, 1, nan) si hay pocos elementos."""
+    from scipy.cluster.hierarchy import fcluster, linkage
+    from sklearn.metrics import silhouette_score
+    X = np.asarray(coords, dtype=float)
+    n = len(X)
+    if n < min_n:
+        return None, 1, float("nan")
+    Z = linkage(X, method="ward")
+    best = (None, 1, -1.0)
+    for k in range(2, min(kmax, n - 1) + 1):
+        lab = fcluster(Z, k, criterion="maxclust") - 1
+        if len(set(lab)) < 2:
+            continue
+        s = silhouette_score(X, lab)
+        if s > best[2]:
+            best = (lab, k, float(s))
+    return best

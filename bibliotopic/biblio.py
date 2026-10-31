@@ -161,6 +161,27 @@ def bradford(df: pd.DataFrame) -> pd.DataFrame:
     return s
 
 
+PARTICLES = {"de", "da", "do", "dos", "das", "del", "della", "la", "le", "van", "von", "der", "den", "di", "du",
+             "y", "e"}
+
+
+def pretty_author(a: str) -> str:
+    """'PARTELLI FL' -> 'Partelli FL'; 'DE LA HOZ-M J' -> 'De la Hoz-M J'."""
+    parts = a.split()
+    if not parts:
+        return a
+    ini = parts[-1] if len(parts) > 1 and parts[-1].isupper() and len(parts[-1]) <= 3 else ""
+    sur = parts[:-1] if ini else parts
+    out = []
+    for i, w in enumerate(sur):
+        lw = w.lower()
+        if i > 0 and lw in PARTICLES:
+            out.append(lw)
+        else:
+            out.append("-".join(x[:1].upper() + x[1:] for x in lw.split("-")))
+    return " ".join(out + ([ini] if ini else []))
+
+
 def top_authors(df: pd.DataFrame, n=10) -> pd.DataFrame:
     auth = df["AU"].map(split_list)
     c = Counter(itertools.chain.from_iterable(auth))
@@ -168,7 +189,7 @@ def top_authors(df: pd.DataFrame, n=10) -> pd.DataFrame:
     for a in auth:
         for x in a:
             frac[x] += 1 / len(a)
-    rows = [(a, k, round(frac[a], 2)) for a, k in c.most_common(n)]
+    rows = [(pretty_author(a), k, round(frac[a], 2)) for a, k in c.most_common(n)]
     return pd.DataFrame(rows, columns=["Author", "Articles", "Articles fractionalized"])
 
 
@@ -204,6 +225,34 @@ def country_collaboration(df: pd.DataFrame) -> pd.DataFrame:
             edges[(a, b)] += 1
     return pd.DataFrame([(a, b, w) for (a, b), w in edges.items()],
                         columns=["From", "To", "Weight"]).sort_values("Weight", ascending=False)
+
+
+def norm_keyword(k: str, synonyms=None) -> str:
+    """Minúsculas, sin puntuación final ni abreviaturas de autoridad botánica ('coffea arabica l.')."""
+    k = re.sub(r"\s+", " ", k.lower()).strip(" .;,")
+    k = re.sub(r"(\s+[a-z]\.?)+$", "", k) if len(k.split()) > 1 else k
+    k = k.replace("‐", "-").strip()
+    return (synonyms or {}).get(k, k)
+
+
+def parse_synonyms(text: str) -> dict:
+    """'arabica coffee = coffea arabica; robusta = coffea canephora' -> dict."""
+    out = {}
+    for part in re.split(r"[;\n]", text or ""):
+        if "=" in part:
+            a, b = part.split("=", 1)
+            for x in a.split(","):
+                if x.strip():
+                    out[norm_keyword(x)] = norm_keyword(b)
+    return out
+
+
+def normalize_keywords(df: pd.DataFrame, synonyms=None) -> pd.DataFrame:
+    d = df.copy()
+    for f in ("DE", "ID"):
+        d[f] = d[f].map(lambda s: "; ".join(dict.fromkeys(
+            k for k in (norm_keyword(x, synonyms) for x in split_list(s)) if k)))
+    return d
 
 
 def keyword_freq(df: pd.DataFrame, field="DE", n=30) -> pd.DataFrame:

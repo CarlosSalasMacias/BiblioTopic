@@ -38,6 +38,9 @@ REFS = {
     "page": "Page, M. J., McKenzie, J. E., Bossuyt, P. M., Boutron, I., Hoffmann, T. C., Mulrow, C. D., et al. (2021). The PRISMA 2020 statement: An updated guideline for reporting systematic reviews. BMJ, 372, n71. https://doi.org/10.1136/bmj.n71",
     "pedregosa": "Pedregosa, F., Varoquaux, G., Gramfort, A., Michel, V., Thirion, B., Grisel, O., et al. (2011). Scikit-learn: Machine learning in Python. Journal of Machine Learning Research, 12, 2825–2830.",
     "reimers": "Reimers, N., & Gurevych, I. (2019). Sentence-BERT: Sentence embeddings using Siamese BERT-networks. Proceedings of EMNLP-IJCNLP 2019, 3982–3992.",
+    "vaneck": "van Eck, N. J., & Waltman, L. (2009). How to normalize cooccurrence data? An analysis of some well-known similarity measures. Journal of the American Society for Information Science and Technology, 60(8), 1635–1651. https://doi.org/10.1002/asi.21075",
+    "ward": "Ward, J. H. (1963). Hierarchical grouping to optimize an objective function. Journal of the American Statistical Association, 58(301), 236–244. https://doi.org/10.1080/01621459.1963.10500845",
+    "rousseeuw": "Rousseeuw, P. J. (1987). Silhouettes: A graphical aid to the interpretation and validation of cluster analysis. Journal of Computational and Applied Mathematics, 20, 53–65. https://doi.org/10.1016/0377-0427(87)90125-7",
     "strehl": "Strehl, A., & Ghosh, J. (2002). Cluster ensembles: A knowledge reuse framework for combining multiple partitions. Journal of Machine Learning Research, 3, 583–617.",
 }
 
@@ -160,6 +163,17 @@ class Writer:
         self.doc.add_paragraph()
 
 
+def _cluster_text(hj, attr="col_clusters", idx=None):
+    lab = getattr(hj, attr, None)
+    if lab is None:
+        return ""
+    names = list(hj.cols.index if attr == "col_clusters" else hj.rows.index)
+    groups = {}
+    for n_, k in zip(names, lab):
+        groups.setdefault(int(k), []).append(str(n_))
+    return "; ".join(f"conglomerado {k + 1}: {', '.join(v)}" for k, v in sorted(groups.items()))
+
+
 def _biplot_associations(hj, top=3):
     """Para cada fila (periodo/país), columnas (temas) más alineadas en el plano 1-2."""
     R = hj.rows.iloc[:, :2].values
@@ -191,6 +205,7 @@ CITE_NAMES = {
     "salas26": "Salas-Macías et al., 2026", "montes26": "Montes-Escobar et al., 2026",
     "page": "Page et al., 2021", "pedregosa": "Pedregosa et al., 2011",
     "reimers": "Reimers y Gurevych, 2019", "strehl": "Strehl y Ghosh, 2002",
+    "vaneck": "van Eck y Waltman, 2009", "ward": "Ward, 1963", "rousseeuw": "Rousseeuw, 1987",
 }
 
 FIG_CAPTIONS = {
@@ -199,20 +214,21 @@ FIG_CAPTIONS = {
     "sources": "Most relevant sources by number of documents.",
     "authors": "Most productive authors.",
     "countries": "Most productive countries by corresponding author; SCP: single-country publications; MCP: multiple-country publications.",
-    "collab": "Country collaboration network. Node size: number of documents; colours: Louvain communities.",
-    "kw": "Keyword co-occurrence network. Node size: occurrences; colours: Louvain communities.",
+    "collab_map": "Country collaboration map. Fill: number of documents (log scale); lines: strongest international co-authorship links.",
+    "collab": "Country collaboration network. Node size: number of documents; edge width: number of co-authored documents; colours: Louvain communities; layout based on association strength.",
+    "kw": "Keyword co-occurrence network. Node size: occurrences; edge width: co-occurrences; colours: Louvain communities; layout based on association strength.",
     "ksel": "Selection of the number of LDA topics (K) with four normalised metrics. Dashed line: selected K.",
     "lda_words": "Top terms of the LDA topics (word–topic probability).",
     "lda_time": "Mean prevalence of LDA topics by period.",
-    "hj_lda": "HJ-Biplot of periods (points) and LDA topics (vectors).",
+    "hj_lda": "HJ-Biplot of periods (squares, joined chronologically) and LDA topics (vectors). Colours and shaded hulls: topic clusters (Ward linkage, number of clusters selected by silhouette).",
     "bert_words": "Top terms of the BERTopic topics (c-TF-IDF weight).",
     "bert_map": "Two-dimensional UMAP projection of document embeddings coloured by BERTopic topic; grey: outliers.",
     "bert_time": "Prevalence of BERTopic topics by period.",
-    "hj_bert": "HJ-Biplot of periods (points) and BERTopic topics (vectors).",
+    "hj_bert": "HJ-Biplot of periods (squares, joined chronologically) and BERTopic topics (vectors). Colours and shaded hulls: topic clusters (Ward linkage, silhouette).",
     "sim": "Cosine similarity between LDA and BERTopic topics; white boxes mark the optimal one-to-one matching.",
     "cont": "Document-level agreement: proportion of documents of each LDA dominant topic assigned to each BERTopic topic.",
     "trends": "Linear trend of the annual prevalence of each topic. Red: hot (p < 0.05, positive slope); blue: cold (p < 0.05, negative slope).",
-    "hj_country": "HJ-Biplot of the most productive countries (points) and LDA topics (vectors).",
+    "hj_country": "HJ-Biplot of the most productive countries (points, coloured by country cluster) and LDA topics (vectors, coloured by topic cluster).",
     "strategic": "Strategic map of LDA topics: growth (slope) versus impact (citations per year); bubble size: prevalence.",
 }
 FIG_ORDER = list(FIG_CAPTIONS)
@@ -317,11 +333,14 @@ def build(R, path, meta, sections=None):
             extra = []
             if R.has_countries:
                 extra.append("la producción por país del autor de correspondencia, distinguiendo publicaciones "
-                             "de un solo país (SCP) y de colaboración internacional (MCP), y la red de "
-                             "colaboración entre países, cuyas comunidades se identificaron con el algoritmo de "
-                             "Louvain " + cite("blondel"))
+                             "de un solo país (SCP) y de colaboración internacional (MCP), el mapa mundial de "
+                             "colaboración y la red de colaboración entre países")
             if X.get("kw_field"):
                 extra.append("la red de co-ocurrencia de las palabras clave más frecuentes")
+            if R.has_countries or X.get("kw_field"):
+                extra[-1] += (". En las redes, los vínculos se normalizaron mediante la fuerza de asociación "
+                              f"{cite('vaneck')}, la disposición se obtuvo con el algoritmo de Fruchterman-Reingold "
+                              "y las comunidades se identificaron con el algoritmo de Louvain " + cite("blondel"))
             W.p("Se calcularon los indicadores descriptivos habituales del análisis de mapeo científico "
                 f"{cite('aria')}: tasa de crecimiento anual compuesta, edad media de los documentos, autores, "
                 "coautores por documento, fuentes más relevantes, zonas de Bradford " + cite("bradford")
@@ -406,7 +425,10 @@ def build(R, path, meta, sections=None):
                         "representa filas y columnas en un mismo sistema de ejes con la máxima calidad de "
                         "representación; los ángulos agudos entre vectores de temas indican correlación "
                         "positiva, y la proximidad entre un periodo y la dirección de un tema indica una mayor "
-                        "prevalencia de ese tema en dicho periodo."
+                        "prevalencia de ese tema en dicho periodo. Para identificar grupos de temas con "
+                        "comportamiento similar se aplicó un análisis de conglomerados jerárquico con el método "
+                        f"de Ward {cite('ward')} sobre las coordenadas de los temas en el plano factorial; el "
+                        f"número de conglomerados se eligió con el coeficiente de silueta {cite('rousseeuw')}."
                         + (" El mismo procedimiento se aplicó a una matriz país × tema con los países más "
                            "productivos." if "hj_country" in FIG else "")
                         + " Este enfoque se ha empleado previamente en estudios bibliométricos con LDA "
@@ -485,7 +507,7 @@ def build(R, path, meta, sections=None):
             top_mcp = cp.head(10).sort_values("MCP ratio", ascending=False)[["Country", "MCP ratio"]].values[:3]
             W.p("Los países con mayor producción, según el país del autor de correspondencia, fueron "
                 + enum_es([f"{c} (n = {a})" for c, a in cp[["Country", "Articles"]].values[:5]])
-                + f"{ref('T4_countries', 'countries')}. El "
+                + f"{ref('T4_countries', 'countries', 'collab_map')}. El "
                 f"{f(info.get('International co-authorship (%)', 0))} % de los documentos tuvo coautoría "
                 "internacional. Entre los diez principales, la mayor proporción de colaboración internacional "
                 "(MCP) correspondió a " + enum_es([f"{c} ({f(100 * r, 1)} %)" for c, r in top_mcp]) + ".")
@@ -545,7 +567,9 @@ def build(R, path, meta, sections=None):
                     f"{f(100 * (hj.inertia[0] + hj.inertia[1]), 1)} % de la inercia en los dos primeros ejes "
                     f"(eje 1: {f(100 * hj.inertia[0], 1)} %; eje 2: {f(100 * hj.inertia[1], 1)} %). El periodo "
                     f"más antiguo ({first_p}) se asoció con {enum_es(a[first_p])}, mientras que el más reciente "
-                    f"({last_p}) se asoció con {enum_es(a[last_p])}.")
+                    f"({last_p}) se asoció con {enum_es(a[last_p])}."
+                    + (f" El análisis de conglomerados identificó {hj.k_cols} grupos de temas (silueta = "
+                       f"{f(hj.sil_cols, 2)}): {_cluster_text(hj)}." if getattr(hj, "col_clusters", None) is not None else ""))
 
         if bert is not None:
             W.h(f"3.{next(sec)}. Temas identificados con BERTopic", 2)
@@ -572,7 +596,9 @@ def build(R, path, meta, sections=None):
                 ab = _biplot_associations(hjb)
                 txt += (f"El HJ-Biplot correspondiente{ref('hj_bert')} explicó el "
                         f"{f(100 * (hjb.inertia[0] + hjb.inertia[1]), 1)} % de la inercia; el periodo {last_p} "
-                        f"se asoció con {enum_es(ab[last_p])}.")
+                        f"se asoció con {enum_es(ab[last_p])}."
+                        + (f" Los temas se organizaron en {hjb.k_cols} conglomerados (silueta = {f(hjb.sil_cols, 2)}): "
+                           f"{_cluster_text(hjb)}." if getattr(hjb, "col_clusters", None) is not None else ""))
             if txt:
                 W.p(txt)
 
@@ -626,7 +652,9 @@ def build(R, path, meta, sections=None):
             W.h(f"3.{next(sec)}. Especialización temática de los países", 2)
             W.p(f"El HJ-Biplot país × tema{ref('hj_country')} explicó el "
                 f"{f(100 * (hjc.inertia[0] + hjc.inertia[1]), 1)} % de la inercia. "
-                + "; ".join(f"{c} se asoció con {enum_es(ac[c])}" for c in list(hjc.rows.index[:4])) + ".")
+                + "; ".join(f"{c} se asoció con {enum_es(ac[c])}" for c in list(hjc.rows.index[:4])) + "."
+                + (f" Los países se agruparon en {hjc.k_rows} conglomerados ({_cluster_text(hjc, 'row_clusters')})."
+                   if getattr(hjc, "row_clusters", None) is not None else ""))
         if "strategic" in FIG:
             W.p(f"El mapa estratégico{ref('strategic')} cruza el crecimiento y el impacto (citas por año) de "
                 "cada tema de LDA: los temas del cuadrante superior derecho combinan crecimiento e impacto "

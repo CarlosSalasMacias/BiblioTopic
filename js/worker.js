@@ -28,9 +28,9 @@ async function init() {
   progress(0.25, "Cargando librerías científicas (numpy, pandas, scikit-learn, matplotlib)…");
   await py.loadPackage(["numpy", "pandas", "scipy", "scikit-learn", "matplotlib", "networkx",
     "micropip", "lxml"]);
-  progress(0.75, "Instalando python-docx, openpyxl y pycountry…");
+  progress(0.75, "Instalando python-docx, openpyxl, pycountry y adjustText…");
   const micropip = py.pyimport("micropip");
-  await micropip.install(["python-docx", "openpyxl", "pycountry"]);
+  await micropip.install(["python-docx", "openpyxl", "pycountry", "adjustText"]);
   progress(0.9, "Cargando BiblioTopic…");
   py.FS.mkdirTree("/home/pyodide/bibliotopic");
   const base = new URL("../bibliotopic/", import.meta.url);
@@ -38,6 +38,9 @@ async function init() {
     const txt = await (await fetch(new URL(f, base), { cache: "no-cache" })).text();
     py.FS.writeFile(`/home/pyodide/bibliotopic/${f}`, txt);
   }
+  py.FS.mkdirTree("/home/pyodide/bibliotopic/data");
+  const world = await (await fetch(new URL("data/world_110m.json", base))).text();
+  py.FS.writeFile("/home/pyodide/bibliotopic/data/world_110m.json", world);
   await py.runPythonAsync(`
 import sys, json, warnings
 warnings.filterwarnings("ignore")

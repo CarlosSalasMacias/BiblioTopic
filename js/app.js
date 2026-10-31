@@ -6,7 +6,7 @@ const state = { analyses: {}, sections: {}, summary: null, labels: null, busy: f
 const DEPENDS = { compare: ["lda", "bertopic"], strategic: ["lda"], hjbiplot: [], temporal: [] };
 const FIG_TITLES = {
   prisma: "Diagrama de flujo", annual: "Producción anual", sources: "Fuentes", authors: "Autores",
-  countries: "Países", collab: "Colaboración entre países", kw: "Palabras clave",
+  countries: "Países", collab_map: "Mapa de colaboración", collab: "Red de colaboración entre países", kw: "Palabras clave",
   ksel: "Selección de K (LDA)", lda_words: "Temas LDA", lda_time: "LDA por periodo",
   hj_lda: "HJ-Biplot LDA", bert_words: "Temas BERTopic", bert_map: "Mapa de documentos",
   bert_time: "BERTopic por periodo", hj_bert: "HJ-Biplot BERTopic", sim: "Similitud LDA–BERTopic",
@@ -127,7 +127,7 @@ $("b-run").onclick = () => {
     year_min: num("o-ymin") || null, year_max: num("o-ymax") || null,
     doc_types: checked("o-dt").length ? checked("o-dt") : null,
     languages: checked("o-la").length ? checked("o-la") : null,
-    query_terms: csv($("o-q").value), extra_stopwords: csv($("o-sw").value),
+    query_terms: csv($("o-q").value), extra_stopwords: csv($("o-sw").value), synonyms: $("o-syn").value,
     k_min: num("o-kmin"), k_max: num("o-kmax"), k_step: num("o-kstep"), k: num("o-k") || null,
     bert_nr_topics: $("o-bnr").value === "lda" ? "lda" : null,
     min_cluster_size: num("o-mcs") || null, n_stab_lda: num("o-slda"), n_stab_bert: num("o-sbert"),

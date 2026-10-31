@@ -14,7 +14,7 @@ import pandas as pd
 
 from . import biblio, compare, figures as F, io as bio
 from .bert_model import BERTResult
-from .hjbiplot import HJBiplot, make_periods
+from .hjbiplot import HJBiplot, clusters as hj_clusters, make_periods
 from .lda_model import LDAResult, select_k
 from .text import Corpus
 
@@ -36,7 +36,7 @@ DEFAULTS = dict(
     languages=["English"], query_terms=[], extra_stopwords=[], min_df=5, max_df=0.5,
     k_min=5, k_max=30, k_step=5, k=None, seed=42, n_stab_lda=3, n_stab_bert=3,
     bert_nr_topics="lda", min_cluster_size=None, period_width=5, top_countries=15,
-    tau_strong=0.5, tau_partial=0.3, min_docs_year=10,
+    tau_strong=0.5, tau_partial=0.3, min_docs_year=10, synonyms="",
 )
 
 
@@ -111,6 +111,7 @@ class Session:
         self.has_countries = self.availability["C1"] > 0.3 and self.on("countries")
         if self.availability["C1"] > 0.3:
             df = biblio.add_country_columns(df)
+        df = biblio.normalize_keywords(df, biblio.parse_synonyms(c.get("synonyms", "")))
         self.df = df
         self.corpus = Corpus(df, c["extra_stopwords"], c["min_df"], c["max_df"], c["query_terms"])
         self.lda = self.bert = self.ksel = None
@@ -212,12 +213,15 @@ class Session:
             T["country_collaboration"] = col
             part = Counter(itertools.chain.from_iterable(df["COUNTRIES"]))
             edges = {(a, b): w for a, b, w in col.itertuples(index=False)}
+            FIG["collab_map"] = F.collaboration_map(fp("Fig05b_country_collaboration_map.png"), dict(part),
+                                                    list(col.itertuples(index=False, name=None)),
+                                                    "Country collaboration map")
             comms = F.network(fp("Fig06_country_collaboration.png"), part.most_common(40), edges,
-                              "Country collaboration network")
+                              "Country collaboration network", top_nodes=40, normalize="association",
+                              size_label="Documents")
             if comms:
                 FIG["collab"] = fp("Fig06_country_collaboration.png")
-                X["collab_clusters"] = [sorted(cm, key=lambda k: -part[k])
-                                        for cm in sorted(comms, key=len, reverse=True)]
+                X["collab_clusters"] = comms
 
         kw_field = None
         if self.on("keywords"):
@@ -227,11 +231,10 @@ class Session:
             T["T5_keywords"] = biblio.keyword_freq(df, kw_field, 30)
             nodes, edges = biblio.keyword_cooccurrence(df, kw_field, 60)
             comms = F.network(fp("Fig07_keyword_cooccurrence.png"), nodes, edges,
-                              "Keyword co-occurrence network")
+                              "Keyword co-occurrence network", top_nodes=50, min_weight=2)
             if comms:
                 FIG["kw"] = fp("Fig07_keyword_cooccurrence.png")
-                X["kw_clusters"] = [sorted(cm, key=lambda k: -dict(nodes).get(k, 0))[:6]
-                                    for cm in sorted(comms, key=len, reverse=True)]
+                X["kw_clusters"] = [cm[:6] for cm in comms]
         X["kw_field"] = kw_field
 
         width = int(c["period_width"])
@@ -259,8 +262,9 @@ class Session:
                                                        lda.labels, "LDA topic prevalence by period")
             if self.on("hjbiplot") and len(plabels) >= 3:
                 hj = HJBiplot(ml.rename(columns=dict(zip(lda.labels, lda.ids))))
+                hj.col_clusters, hj.k_cols, hj.sil_cols = hj_clusters(hj.cols.iloc[:, :2].values)
                 FIG["hj_lda"] = F.biplot(fp("Fig11_HJBiplot_LDA_periods.png"), hj,
-                                         "HJ-Biplot: LDA topics and periods")
+                                         "HJ-Biplot: LDA topics and periods", col_clusters=hj.col_clusters)
                 T["hj_lda_inertia"] = hj.summary()
                 X["hj_l"] = hj
         if bert is not None:
@@ -281,8 +285,10 @@ class Session:
                                                         cmap="Oranges")
             if self.on("hjbiplot") and len(plabels) >= 3:
                 hj = HJBiplot(mb.rename(columns=dict(zip(bert.labels, bert.ids))))
+                hj.col_clusters, hj.k_cols, hj.sil_cols = hj_clusters(hj.cols.iloc[:, :2].values)
                 FIG["hj_bert"] = F.biplot(fp("Fig15_HJBiplot_BERTopic_periods.png"), hj,
-                                          "HJ-Biplot: BERTopic topics and periods")
+                                          "HJ-Biplot: BERTopic topics and periods",
+                                          col_clusters=hj.col_clusters)
                 T["hj_bert_inertia"] = hj.summary()
                 X["hj_b"] = hj
 
@@ -316,8 +322,11 @@ class Session:
                     for cc in topc]
             if len(topc) >= 3:
                 hjc = HJBiplot(pd.DataFrame(rows, index=topc, columns=lda.ids))
+                hjc.col_clusters, hjc.k_cols, hjc.sil_cols = hj_clusters(hjc.cols.iloc[:, :2].values)
+                hjc.row_clusters, hjc.k_rows, hjc.sil_rows = hj_clusters(hjc.rows.iloc[:, :2].values)
                 FIG["hj_country"] = F.biplot(fp("Fig19_HJBiplot_countries_LDA_topics.png"), hjc,
-                                             "HJ-Biplot: countries and LDA topics", row_color=F.GREEN)
+                                             "HJ-Biplot: countries and LDA topics", row_kind="country",
+                                             col_clusters=hjc.col_clusters, row_clusters=hjc.row_clusters)
                 T["hj_country_inertia"] = hjc.summary()
                 X["hj_country"] = hjc
 
