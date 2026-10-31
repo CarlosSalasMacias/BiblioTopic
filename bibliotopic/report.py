@@ -58,6 +58,10 @@ def enum_es(items):
     return ", ".join(items[:-1]) + " y " + items[-1]
 
 
+def pl(n, sing, plur):
+    return f"{n} {sing if n == 1 else plur}"
+
+
 def _short(label):
     return label.split(":", 1)[1].strip() if ":" in label else label
 
@@ -167,421 +171,493 @@ def _biplot_associations(hj, top=3):
             for i in range(len(R))}
 
 
-def build(R, path, meta):
-    """meta: topic_name, query, databases, search_date."""
+SECTIONS = {
+    "methods": "Materiales y métodos",
+    "results": "Resultados",
+    "tables": "Tablas (en inglés)",
+    "figures": "Figuras (en inglés)",
+    "references": "Referencias de los métodos",
+}
+
+CITE_NAMES = {
+    "aria": "Aria y Cuccurullo, 2017", "arun": "Arun et al., 2010", "blei": "Blei et al., 2003",
+    "blondel": "Blondel et al., 2008", "bouma": "Bouma, 2009", "bradford": "Bradford, 1934",
+    "campello": "Campello et al., 2013", "cao": "Cao et al., 2009", "deveaud": "Deveaud et al., 2014",
+    "dieng": "Dieng et al., 2020", "gabriel": "Gabriel, 1971", "galindo": "Galindo, 1986",
+    "griffiths": "Griffiths y Steyvers, 2004", "grootendorst": "Grootendorst, 2022",
+    "hoffman": "Hoffman et al., 2010", "hubert": "Hubert y Arabie, 1985", "kuhn": "Kuhn, 1955",
+    "lotka": "Lotka, 1926", "mcinnes18": "McInnes et al., 2018", "mimno": "Mimno et al., 2011",
+    "montes23": "Montes-Escobar et al., 2023", "abril24": "Abril-Espin et al., 2024",
+    "salas26": "Salas-Macías et al., 2026", "montes26": "Montes-Escobar et al., 2026",
+    "page": "Page et al., 2021", "pedregosa": "Pedregosa et al., 2011",
+    "reimers": "Reimers y Gurevych, 2019", "strehl": "Strehl y Ghosh, 2002",
+}
+
+FIG_CAPTIONS = {
+    "prisma": "Flow diagram of record identification, deduplication and screening (adapted from PRISMA 2020).",
+    "annual": "Annual scientific production.",
+    "sources": "Most relevant sources by number of documents.",
+    "authors": "Most productive authors.",
+    "countries": "Most productive countries by corresponding author; SCP: single-country publications; MCP: multiple-country publications.",
+    "collab": "Country collaboration network. Node size: number of documents; colours: Louvain communities.",
+    "kw": "Keyword co-occurrence network. Node size: occurrences; colours: Louvain communities.",
+    "ksel": "Selection of the number of LDA topics (K) with four normalised metrics. Dashed line: selected K.",
+    "lda_words": "Top terms of the LDA topics (word–topic probability).",
+    "lda_time": "Mean prevalence of LDA topics by period.",
+    "hj_lda": "HJ-Biplot of periods (points) and LDA topics (vectors).",
+    "bert_words": "Top terms of the BERTopic topics (c-TF-IDF weight).",
+    "bert_map": "Two-dimensional UMAP projection of document embeddings coloured by BERTopic topic; grey: outliers.",
+    "bert_time": "Prevalence of BERTopic topics by period.",
+    "hj_bert": "HJ-Biplot of periods (points) and BERTopic topics (vectors).",
+    "sim": "Cosine similarity between LDA and BERTopic topics; white boxes mark the optimal one-to-one matching.",
+    "cont": "Document-level agreement: proportion of documents of each LDA dominant topic assigned to each BERTopic topic.",
+    "trends": "Linear trend of the annual prevalence of each topic. Red: hot (p < 0.05, positive slope); blue: cold (p < 0.05, negative slope).",
+    "hj_country": "HJ-Biplot of the most productive countries (points) and LDA topics (vectors).",
+    "strategic": "Strategic map of LDA topics: growth (slope) versus impact (citations per year); bubble size: prevalence.",
+}
+FIG_ORDER = list(FIG_CAPTIONS)
+
+TAB_CAPTIONS = {
+    "T1_main_information": ("Main information about the corpus.", None),
+    "T2_top_sources": ("Most relevant sources.", None),
+    "T4_countries": ("Most productive countries (corresponding author).",
+                     "SCP: single-country publications; MCP: multiple-country publications."),
+    "T6_LDA_topics": ("Topics identified by LDA.",
+                      "Prevalence: mean document–topic probability. Stability: mean cosine similarity "
+                      "with matched topics across random seeds."),
+    "T7_BERTopic_topics": ("Topics identified by BERTopic.", "Prevalence computed after outlier reassignment."),
+    "T8_model_metrics": ("Comparison of model quality metrics.", None),
+    "T9_topic_alignment": ("Alignment between LDA and BERTopic topics (Hungarian matching).",
+                           "TRI: Topic Robustness Index = cosine × √(stability_LDA × stability_BERTopic)."),
+}
+TAB_ORDER = list(TAB_CAPTIONS)
+
+
+def build(R, path, meta, sections=None):
+    """meta: topic_name, title, query, search_date, embedding_tool.  sections: subconjunto de SECTIONS."""
+    sections = set(sections or SECTIONS)
     cfg, df, lda, bert, T, FIG, X = R.cfg, R.df, R.lda, R.bert, R.tables, R.figs, R.facts
-    C, info, ap = X["C"], X["info"], X["ap"]
+    C, info, ap = X.get("C"), X["info"], X["ap"]
     ms = R.merge_stats
+    stab_on = R.on("stability")
     topic = meta.get("topic_name") or "[TOPIC]"
-    title = meta.get("title") or (f"Mapping the scientific landscape of {topic}: bibliometrics and a "
-                                  "comparative topic modelling approach using LDA and BERTopic")
+    models = " and ".join(m for m, r in (("LDA", lda), ("BERTopic", bert)) if r is not None)
+    title = meta.get("title") or (
+        f"Mapping the scientific landscape of {topic}: bibliometrics"
+        + (f" and {'a comparative ' if lda is not None and bert is not None else ''}topic modelling "
+           f"using {models}" if models else " analysis"))
     W = Writer(title)
     W.note("Borrador generado automáticamente a partir de los datos. Los textos resaltados en amarillo "
            "requieren revisión de los autores expertos en la temática (en particular, las etiquetas "
            "de los temas). Título, figuras y tablas en inglés; texto en español.")
-
-    fig_order = [k for k in ["prisma", "annual", "sources", "authors", "countries", "collab", "kw",
-                             "ksel", "lda_words", "lda_time", "hj_lda", "bert_words", "bert_map",
-                             "bert_time", "hj_bert", "sim", "cont", "trends", "hj_country",
-                             "strategic"] if k in FIG]
-    tab_order = [k for k in ["T1_main_information", "T2_top_sources", "T4_countries",
-                             "T6_LDA_topics", "T7_BERTopic_topics", "T8_model_metrics",
-                             "T9_topic_alignment"] if k in T]
-    W.reserve(fig_order, tab_order)
+    W.reserve([k for k in FIG_ORDER if k in FIG], [k for k in TAB_ORDER if k in T])
     used = set()
 
     def cite(*keys):
         used.update(keys)
-        names = {"aria": "Aria y Cuccurullo, 2017", "arun": "Arun et al., 2010",
-                 "blei": "Blei et al., 2003", "blondel": "Blondel et al., 2008",
-                 "bouma": "Bouma, 2009", "bradford": "Bradford, 1934",
-                 "campello": "Campello et al., 2013", "cao": "Cao et al., 2009",
-                 "deveaud": "Deveaud et al., 2014", "dieng": "Dieng et al., 2020",
-                 "gabriel": "Gabriel, 1971", "galindo": "Galindo, 1986",
-                 "griffiths": "Griffiths y Steyvers, 2004", "grootendorst": "Grootendorst, 2022",
-                 "hoffman": "Hoffman et al., 2010", "hubert": "Hubert y Arabie, 1985",
-                 "kuhn": "Kuhn, 1955", "lotka": "Lotka, 1926", "mcinnes17": "McInnes et al., 2017",
-                 "mcinnes18": "McInnes et al., 2018", "mimno": "Mimno et al., 2011",
-                 "montes23": "Montes-Escobar et al., 2023", "abril24": "Abril-Espin et al., 2024",
-                 "salas26": "Salas-Macías et al., 2026", "montes26": "Montes-Escobar et al., 2026",
-                 "page": "Page et al., 2021", "pedregosa": "Pedregosa et al., 2011",
-                 "reimers": "Reimers y Gurevych, 2019", "strehl": "Strehl y Ghosh, 2002"}
-        return "(" + "; ".join(names[k] for k in keys) + ")"
+        return "(" + "; ".join(CITE_NAMES[k] for k in keys) + ")"
 
-    by_db = ms["records_by_db"]
-    dbs_txt = enum_es([{"WoS": "Web of Science Core Collection (WoS)", "Scopus": "Scopus"}[k]
-                       for k in by_db])
-    py = df["PY"].astype(int)
-    n = len(df)
+    def ref(*keys):
+        """'(Tabla 2; Figura 3)' solo con los elementos que existen."""
+        parts = [W.T(k) if k in W.tab_no else W.F(k) for k in keys if k in W.tab_no or k in W.fig_no]
+        return f" ({'; '.join(parts)})" if parts else ""
 
-    # ================================================================ MÉTODOS
     def tl_(labels):
         return "; ".join(f"{l.split(':')[0]}: {_short(l)}" for l in labels)
 
-    W.h("2. Materiales y métodos", 1)
-    W.h("2.1. Fuente de datos y estrategia de búsqueda", 2)
-    q = meta.get("query") or "[ecuación de búsqueda]"
-    date = meta.get("search_date") or "[fecha]"
-    W.p(f"La información se obtuvo de {dbs_txt}, bases de datos de referencia para estudios "
-        "bibliométricos por su cobertura multidisciplinar y la calidad de sus metadatos. La búsqueda se "
-        f"realizó el ", (date, "hl"), " mediante la siguiente ecuación booleana aplicada a título, resumen "
-        "y palabras clave: ", (q, "hl"), ". Los registros se exportaron con todos sus campos "
-        f"disponibles ({'; '.join(f'{k}: {f(v, 0)} registros' for k, v in by_db.items())}).")
-    W.h("2.2. Depuración y fusión del corpus", 2)
-    es = {"Other document types": "otros tipos de documento", "Other languages": "otros idiomas",
-          "Missing/short abstract (<20 words)": "registros sin resumen o con menos de 20 palabras"}
-    excl_txt = enum_es([f"{es.get(name, 'registros fuera del periodo ' + name.split()[-1])} "
-                        f"(n = {f(k, 0)})" for name, k in R.excl_steps if k])
-    filt = []
-    if cfg.get("doc_types") and R.availability["DT"] > 0:
-        filt.append("tipos de documento " + enum_es(cfg["doc_types"]))
-    if cfg.get("languages") and R.availability["LA"] > 0:
-        filt.append("idioma " + enum_es(cfg["languages"]))
-    W.p("Los registros de ambas fuentes se normalizaron a un esquema común (autores, título, fuente, año, "
-        "resumen, palabras clave, afiliaciones, citas, DOI) y se fusionaron. Los duplicados se "
-        "identificaron primero por coincidencia del DOI y, en ausencia de este, por coincidencia del título "
-        "normalizado (minúsculas, sin signos ni tildes) y el año de publicación; de cada grupo de duplicados "
-        "se conservó el registro con más campos completos y el mayor número de citas. "
-        f"Se eliminaron {f(ms['duplicates_removed'], 0)} duplicados, quedando {f(ms['unique'], 0)} registros "
-        "únicos. Como criterios de elegibilidad se exigió "
-        + (enum_es(filt) + " y " if filt else "")
-        + f"un resumen de al menos 20 palabras. Se excluyeron {excl_txt or 'ningún registro'}, de modo que "
-        f"el corpus final quedó integrado por {f(n, 0)} documentos publicados entre {py.min()} y {py.max()}. "
-        f"El proceso se resume en un diagrama de flujo adaptado de PRISMA 2020 {cite('page')} "
-        f"({W.F('prisma')}).")
+    def num():
+        n = 0
+        while True:
+            n += 1
+            yield n
 
-    W.h("2.3. Análisis bibliométrico", 2)
-    extra = []
-    if R.has_countries:
-        extra.append("la producción por país del autor de correspondencia, distinguiendo publicaciones de un "
-                     "solo país (SCP) y de colaboración internacional (MCP), y la red de colaboración entre "
-                     "países, cuyas comunidades se identificaron con el algoritmo de Louvain " + cite("blondel"))
-    if X.get("kw_field"):
-        extra.append("la red de co-ocurrencia de las palabras clave más frecuentes")
-    W.p("Se calcularon los indicadores descriptivos habituales del análisis de mapeo científico "
-        f"{cite('aria')}: tasa de crecimiento anual compuesta, edad media de los documentos, autores, "
-        "coautores por documento, fuentes más relevantes, zonas de Bradford " + cite("bradford")
-        + " y distribución de la productividad de autores según la ley de Lotka " + cite("lotka")
-        + (". Además, se analizaron " + enum_es(extra) if extra else "")
-        + ". Los indicadores se implementaron en Python siguiendo las definiciones de bibliometrix.")
+    by_db = ms["records_by_db"]
+    dbs_txt = enum_es([{"WoS": "Web of Science Core Collection (WoS)", "Scopus": "Scopus"}[k] for k in by_db])
+    py = df["PY"].astype(int)
+    n = len(df)
+    trends_l, trends_b = X.get("trends_lda"), X.get("trends_bert")
 
-    W.h("2.4. Preprocesamiento del texto", 2)
-    W.p("Para el modelado de temas se concatenó el título y el resumen de cada documento. El texto se "
-        "convirtió a minúsculas y se eliminaron números, signos de puntuación, las palabras vacías del inglés, "
-        "un listado de términos académicos genéricos (p. ej., study, results, analysis) y los términos de "
-        "la propia ecuación de búsqueda"
-        + (f" ({enum_es(cfg['query_terms'])})" if cfg.get("query_terms") else "")
-        + ", que por estar presentes en casi todos los documentos no aportan capacidad discriminante. "
-        "Los términos se llevaron a su forma singular y se identificaron expresiones compuestas "
-        f"(bigramas) con información mutua puntual normalizada (NPMI) ≥ 0.35 y al menos 10 apariciones "
-        f"{cite('bouma')}, lo que generó {f(len(R.corpus.phrases), 0)} términos compuestos. Finalmente se "
-        f"retuvieron los términos presentes en al menos {cfg['min_df']} documentos y en no más del "
-        f"{int(100 * cfg['max_df'])} % de ellos, con un vocabulario final de {f(len(R.corpus.vocab), 0)} "
-        "términos. El mismo vocabulario se utilizó en ambos modelos para que la comparación fuera directa.")
+    # ================================================================ MÉTODOS
+    if "methods" in sections:
+        s = num()
+        W.h("2. Materiales y métodos", 1)
+        W.h(f"2.{next(s)}. Fuente de datos y estrategia de búsqueda", 2)
+        q = meta.get("query") or "[ecuación de búsqueda]"
+        date = meta.get("search_date") or "[fecha]"
+        W.p(f"La información se obtuvo de {dbs_txt}, bases de datos de referencia para estudios "
+            "bibliométricos por su cobertura multidisciplinar y la calidad de sus metadatos. La búsqueda se "
+            "realizó el ", (date, "hl"), " mediante la siguiente ecuación booleana aplicada a título, resumen "
+            "y palabras clave: ", (q, "hl"), ". Los registros se exportaron con todos sus campos disponibles ("
+            + "; ".join(f"{k}: {f(v, 0)} registros" for k, v in by_db.items()) + ").")
 
-    W.h("2.5. Modelado de temas con LDA", 2)
-    ks = R.ksel["K"]
-    W.p(f"La asignación latente de Dirichlet (LDA) {cite('blei')} representa cada documento como una "
-        "mezcla de temas y cada tema como una distribución de probabilidad sobre el vocabulario. El modelo se "
-        f"estimó por inferencia variacional en lote {cite('hoffman')} con scikit-learn {cite('pedregosa')}. "
-        f"El número de temas (K) se evaluó entre {ks.min()} y {ks.max()} (paso {cfg['k_step']}) con cuatro "
-        f"métricas complementarias: CaoJuan2009 {cite('cao')} y Arun2010 {cite('arun')}, a minimizar, y "
-        f"Deveaud2014 {cite('deveaud')} y la coherencia NPMI de las diez palabras principales de cada tema "
-        f"{cite('bouma')}, a maximizar. Las métricas se normalizaron entre 0 y 1 y se seleccionó el K con "
-        "el mayor promedio" + (" (valor fijado por los autores: K = " + str(cfg['k']) + ")" if cfg.get("k") else "")
-        + f". Para evaluar la estabilidad, el modelo final se reestimó con {cfg['n_stab_lda']} semillas "
-        "aleatorias distintas; cada tema se emparejó con su homólogo mediante el algoritmo húngaro "
-        f"{cite('kuhn')} y se calculó la similitud coseno media entre réplicas como índice de estabilidad.")
+        W.h(f"2.{next(s)}. Depuración y fusión del corpus", 2)
+        es = {"Other document types": "otros tipos de documento", "Other languages": "otros idiomas",
+              "Missing/short abstract (<20 words)": "registros sin resumen o con menos de 20 palabras"}
+        excl_txt = enum_es([f"{es.get(name, 'registros fuera del periodo ' + name.split()[-1])} "
+                            f"(n = {f(k, 0)})" for name, k in R.excl_steps if k])
+        filt = []
+        if cfg.get("doc_types") and R.availability["DT"] > 0:
+            filt.append("tipos de documento " + enum_es(cfg["doc_types"]))
+        if cfg.get("languages") and R.availability["LA"] > 0:
+            filt.append("idioma " + enum_es(cfg["languages"]))
+        W.p(("Los registros de ambas fuentes se normalizaron a un esquema común y se fusionaron. "
+             if len(by_db) > 1 else "Los registros de los distintos lotes se normalizaron y se unificaron. ")
+            + "Los duplicados se identificaron primero por coincidencia del DOI y, en ausencia de este, por "
+            "coincidencia del título normalizado (minúsculas, sin signos ni tildes) y el año de publicación; de "
+            "cada grupo de duplicados se conservó el registro con más campos completos y el mayor número de "
+            f"citas. Se eliminaron {f(ms['duplicates_removed'], 0)} duplicados, quedando {f(ms['unique'], 0)} "
+            "registros únicos. Como criterios de elegibilidad se exigió "
+            + (enum_es(filt) + " y " if filt else "")
+            + f"un resumen de al menos 20 palabras. Se excluyeron {excl_txt or 'ningún registro'}, de modo que "
+            f"el corpus final quedó integrado por {f(n, 0)} documentos publicados entre {py.min()} y {py.max()}. "
+            f"El proceso se resume en un diagrama de flujo adaptado de PRISMA 2020 {cite('page')}{ref('prisma')}.")
 
-    W.h("2.6. Modelado de temas con BERTopic", 2)
-    emb_txt = (f"el modelo de lenguaje preentrenado {R.emb_name} {cite('reimers')}"
-               if "fallback" not in R.emb_name.lower() else
-               "una representación semántica latente (TF-IDF + SVD) [REEMPLAZAR por el modelo de embeddings usado]")
-    W.p(f"BERTopic {cite('grootendorst')} agrupa documentos semánticamente similares a partir de "
-        f"representaciones vectoriales densas. Los títulos y resúmenes se codificaron con {emb_txt}; la "
-        f"dimensionalidad se redujo a cinco componentes con UMAP {cite('mcinnes18')} (15 vecinos, distancia "
-        "coseno) y los documentos se agruparon con HDBSCAN "
-        f"{cite('campello', 'mcinnes17')} (tamaño mínimo de grupo = {bert.min_cluster_size}). Cada tema se "
-        "describió mediante TF-IDF basado en clases (c-TF-IDF) sobre el mismo vocabulario usado en LDA. "
-        + (f"HDBSCAN identificó {bert.native_topics} grupos; para comparar ambos modelos con igual "
-           f"granularidad, los temas se fusionaron jerárquicamente hasta K = {bert.k}. "
-           if bert.native_topics != bert.k else "")
-        + "Los documentos no asignados (outliers) se reasignaron al tema con mayor similitud c-TF-IDF para "
-        f"los análisis por documento. La estabilidad se evaluó como en LDA, con {cfg['n_stab_bert']} "
-        "semillas de UMAP distintas.")
+        if R.on("biblio") or R.has_countries or X.get("kw_field"):
+            W.h(f"2.{next(s)}. Análisis bibliométrico", 2)
+            extra = []
+            if R.has_countries:
+                extra.append("la producción por país del autor de correspondencia, distinguiendo publicaciones "
+                             "de un solo país (SCP) y de colaboración internacional (MCP), y la red de "
+                             "colaboración entre países, cuyas comunidades se identificaron con el algoritmo de "
+                             "Louvain " + cite("blondel"))
+            if X.get("kw_field"):
+                extra.append("la red de co-ocurrencia de las palabras clave más frecuentes")
+            W.p("Se calcularon los indicadores descriptivos habituales del análisis de mapeo científico "
+                f"{cite('aria')}: tasa de crecimiento anual compuesta, edad media de los documentos, autores, "
+                "coautores por documento, fuentes más relevantes, zonas de Bradford " + cite("bradford")
+                + " y distribución de la productividad de autores según la ley de Lotka " + cite("lotka")
+                + (". Además, se analizaron " + enum_es(extra) if extra else "")
+                + ". Los indicadores se implementaron en Python siguiendo las definiciones de bibliometrix.")
 
-    W.h("2.7. Dinámica temporal y HJ-Biplot", 2)
-    W.p(f"La evolución de cada tema se estimó mediante la regresión lineal de su prevalencia media anual "
-        f"sobre el año de publicación {cite('griffiths')}, considerando los años con al menos "
-        f"{cfg['min_docs_year']} documentos; los temas con pendiente significativa (p < 0.05) se clasificaron "
-        "como emergentes (hot) o en declive (cold). Para analizar conjuntamente temas y tiempo se agruparon "
-        f"los años en periodos ({enum_es(X['periods'])}) y se construyó una matriz periodo × tema con la "
-        f"prevalencia media, a la que se aplicó un HJ-Biplot {cite('galindo', 'gabriel')}. Este método permite "
-        "representar filas y columnas en un mismo sistema de ejes con la máxima calidad de representación; "
-        "los ángulos agudos entre vectores de temas indican correlación positiva, y la proximidad entre un "
-        "periodo y la dirección de un tema indica una mayor prevalencia de ese tema en dicho periodo."
-        + (" El mismo procedimiento se aplicó a una matriz país × tema con los países más productivos."
-           if R.has_countries else "")
-        + f" Este enfoque ha sido empleado previamente en estudios bibliométricos con LDA "
-        f"{cite('montes23', 'abril24', 'salas26', 'montes26')}.")
+        if lda is not None or bert is not None:
+            W.h(f"2.{next(s)}. Preprocesamiento del texto", 2)
+            W.p("Para el modelado de temas se concatenó el título y el resumen de cada documento. El texto se "
+                "convirtió a minúsculas y se eliminaron números, signos de puntuación, las palabras vacías del "
+                "inglés, un listado de términos académicos genéricos (p. ej., study, results, analysis) y los "
+                "términos de la propia ecuación de búsqueda"
+                + (f" ({enum_es(cfg['query_terms'])})" if cfg.get("query_terms") else "")
+                + ", que por estar presentes en casi todos los documentos no aportan capacidad discriminante. "
+                "Los términos se llevaron a su forma singular y se identificaron expresiones compuestas "
+                "(bigramas) con información mutua puntual normalizada (NPMI) ≥ 0.35 y al menos 10 apariciones "
+                f"{cite('bouma')}, lo que generó {f(len(R.corpus.phrases), 0)} términos compuestos. Se retuvieron "
+                f"los términos presentes en al menos {cfg['min_df']} documentos y en no más del "
+                f"{int(100 * cfg['max_df'])} % de ellos, con un vocabulario final de "
+                f"{f(len(R.corpus.vocab), 0)} términos"
+                + (". El mismo vocabulario se utilizó en ambos modelos para que la comparación fuera directa."
+                   if lda is not None and bert is not None else "."))
 
-    W.h("2.8. Comparación entre LDA y BERTopic", 2)
-    W.p("Ambos modelos se compararon en tres niveles. (i) Calidad intrínseca: coherencia NPMI y UMass "
-        f"{cite('bouma', 'mimno')}, diversidad de temas (proporción de términos únicos entre las 25 "
-        f"palabras principales de todos los temas) {cite('dieng')}, estabilidad entre semillas y proporción "
-        "de outliers. (ii) Correspondencia entre temas: se calculó la similitud coseno entre la distribución "
-        "palabra-tema de LDA y el vector c-TF-IDF de BERTopic y se obtuvo el emparejamiento óptimo uno a uno "
-        f"con el algoritmo húngaro {cite('kuhn')}; también se informa el índice de Jaccard entre las diez "
-        f"palabras principales. (iii) Coincidencia a nivel de documento: índice de Rand ajustado (ARI) "
-        f"{cite('hubert')} e información mutua normalizada (NMI) {cite('strehl')} entre el tema dominante "
-        "de LDA y el tema asignado por BERTopic. Con estos elementos se propone un Índice de Robustez "
-        "Temática (TRI) para cada par emparejado: TRI = cos(LDA, BERTopic) × √(estabilidad LDA × "
-        "estabilidad BERTopic). Un par se consideró convergente (robusto) cuando la similitud fue ≥ "
-        f"{cfg['tau_strong']}, parcial cuando estuvo entre {cfg['tau_partial']} y {cfg['tau_strong']}, y "
-        "divergente en otro caso. Finalmente, se evaluó la concordancia en la clasificación temporal "
-        "(emergente, estable o en declive) de los temas emparejados.")
+        if lda is not None:
+            W.h(f"2.{next(s)}. Modelado de temas con LDA", 2)
+            ksel_txt = ""
+            if R.ksel is not None:
+                ks = R.ksel["K"]
+                ksel_txt = (f"El número de temas (K) se evaluó entre {ks.min()} y {ks.max()} (paso "
+                            f"{cfg['k_step']}) con cuatro métricas complementarias: CaoJuan2009 {cite('cao')} y "
+                            f"Arun2010 {cite('arun')}, a minimizar, y Deveaud2014 {cite('deveaud')} y la "
+                            "coherencia NPMI de las diez palabras principales de cada tema "
+                            f"{cite('bouma')}, a maximizar. Las métricas se normalizaron entre 0 y 1 y se "
+                            "seleccionó el K con el mayor promedio. ")
+            else:
+                ksel_txt = f"El número de temas se fijó en K = {lda.k}. "
+            W.p(f"La asignación latente de Dirichlet (LDA) {cite('blei')} representa cada documento como una "
+                "mezcla de temas y cada tema como una distribución de probabilidad sobre el vocabulario. El "
+                f"modelo se estimó por inferencia variacional en línea {cite('hoffman')} con scikit-learn "
+                f"{cite('pedregosa')}. " + ksel_txt
+                + (f"Para evaluar la estabilidad, el modelo final se reestimó con {cfg['n_stab_lda']} semillas "
+                   "aleatorias distintas; cada tema se emparejó con su homólogo mediante el algoritmo húngaro "
+                   f"{cite('kuhn')} y se calculó la similitud coseno media entre réplicas como índice de "
+                   "estabilidad." if stab_on else ""))
 
-    W.h("2.9. Reproducibilidad", 2)
-    v = R.versions
-    W.p(f"Todos los análisis se realizaron en Python {v.get('python')} con pandas {v.get('pandas')}, "
-        f"scikit-learn {v.get('scikit-learn')}, BERTopic {v.get('bertopic')}, umap-learn "
-        f"{v.get('umap-learn')}, hdbscan {v.get('hdbscan')}, sentence-transformers "
-        f"{v.get('sentence-transformers')} y networkx {v.get('networkx')}, mediante la aplicación "
-        f"BiblioTopic desarrollada por los autores. Se fijó la semilla aleatoria {cfg['seed']}. La "
-        "configuración completa, las tablas intermedias y la asignación de temas por documento se "
-        "proporcionan como material suplementario.")
+        if bert is not None:
+            W.h(f"2.{next(s)}. Modelado de temas con BERTopic", 2)
+            lsa = "lsa" in R.emb_name.lower()
+            emb_txt = ("una representación semántica latente (TF-IDF + SVD) [REEMPLAZAR si se usó un modelo de "
+                       "lenguaje]" if lsa else
+                       f"el modelo de lenguaje preentrenado {R.emb_name} {cite('reimers')}")
+            W.p(f"BERTopic {cite('grootendorst')} agrupa documentos semánticamente similares a partir de "
+                f"representaciones vectoriales densas. Los títulos y resúmenes se codificaron con {emb_txt}; "
+                f"la dimensionalidad se redujo a cinco componentes con UMAP {cite('mcinnes18')} (15 vecinos) y "
+                f"los documentos se agruparon con HDBSCAN {cite('campello')} (tamaño mínimo de grupo = "
+                f"{bert.min_cluster_size}). Cada tema se describió mediante TF-IDF basado en clases "
+                "(c-TF-IDF) con reducción de palabras frecuentes"
+                + (", sobre el mismo vocabulario usado en LDA" if lda is not None else "") + ". "
+                + (f"HDBSCAN identificó {bert.native_topics} grupos, que se fusionaron por similitud c-TF-IDF "
+                   f"(agrupamiento jerárquico con enlace promedio) hasta K = {bert.k}"
+                   + (" para comparar ambos modelos con igual granularidad" if lda is not None else "") + ". "
+                   if bert.native_topics != bert.k else "")
+                + "Los documentos no asignados (outliers) se reasignaron al tema con mayor similitud c-TF-IDF "
+                "para los análisis por documento."
+                + (f" La estabilidad se evaluó con {bert.n_stab} semillas de UMAP distintas, emparejando los "
+                   "temas con el algoritmo húngaro." if bert.n_stab else "")
+                + f" El procedimiento se ejecutó en el navegador mediante {meta.get('embedding_tool', 'transformers.js y umap-js')}.")
+
+        if (R.on("temporal") or R.on("hjbiplot")) and (lda is not None or bert is not None):
+            W.h(f"2.{next(s)}. Dinámica temporal" + (" y HJ-Biplot" if R.on("hjbiplot") else ""), 2)
+            txt = ""
+            if R.on("temporal"):
+                txt += (f"La evolución de cada tema se estimó mediante la regresión lineal de su prevalencia media "
+                        f"anual sobre el año de publicación {cite('griffiths')}, considerando los años con al "
+                        f"menos {cfg['min_docs_year']} documentos; los temas con pendiente significativa "
+                        "(p < 0.05) se clasificaron como emergentes (hot) o en declive (cold). ")
+            if R.on("hjbiplot"):
+                txt += (f"Para analizar conjuntamente temas y tiempo se agruparon los años en periodos "
+                        f"({enum_es(X['periods'])}) y se construyó una matriz periodo × tema con la prevalencia "
+                        f"media, a la que se aplicó un HJ-Biplot {cite('galindo', 'gabriel')}. Este método "
+                        "representa filas y columnas en un mismo sistema de ejes con la máxima calidad de "
+                        "representación; los ángulos agudos entre vectores de temas indican correlación "
+                        "positiva, y la proximidad entre un periodo y la dirección de un tema indica una mayor "
+                        "prevalencia de ese tema en dicho periodo."
+                        + (" El mismo procedimiento se aplicó a una matriz país × tema con los países más "
+                           "productivos." if "hj_country" in FIG else "")
+                        + " Este enfoque se ha empleado previamente en estudios bibliométricos con LDA "
+                        f"{cite('montes23', 'abril24', 'salas26', 'montes26')}.")
+            W.p(txt)
+
+        if C is not None:
+            W.h(f"2.{next(s)}. Comparación entre LDA y BERTopic", 2)
+            W.p("Ambos modelos se compararon en tres niveles. (i) Calidad intrínseca: coherencia NPMI y UMass "
+                f"{cite('bouma', 'mimno')}, diversidad de temas (proporción de términos únicos entre las 25 "
+                f"palabras principales de todos los temas) {cite('dieng')}"
+                + (", estabilidad entre semillas" if stab_on else "") + " y proporción de outliers. "
+                "(ii) Correspondencia entre temas: se calculó la similitud coseno entre la distribución "
+                "palabra-tema de LDA y el vector c-TF-IDF de BERTopic y se obtuvo el emparejamiento óptimo uno a "
+                f"uno con el algoritmo húngaro {cite('kuhn')}; también se informa el índice de Jaccard entre las "
+                "diez palabras principales. (iii) Coincidencia a nivel de documento: índice de Rand ajustado "
+                f"(ARI) {cite('hubert')} e información mutua normalizada (NMI) {cite('strehl')} entre el tema "
+                "dominante de LDA y el tema asignado por BERTopic. "
+                + ("Con estos elementos se propone un Índice de Robustez Temática (TRI) para cada par "
+                   "emparejado: TRI = cos(LDA, BERTopic) × √(estabilidad LDA × estabilidad BERTopic). "
+                   if stab_on else "")
+                + f"Un par se consideró convergente cuando la similitud fue ≥ {cfg['tau_strong']}, parcial "
+                f"cuando estuvo entre {cfg['tau_partial']} y {cfg['tau_strong']}, y divergente en otro caso."
+                + (" Finalmente, se evaluó la concordancia en la clasificación temporal (emergente, estable o en "
+                   "declive) de los temas emparejados." if R.on("temporal") else ""))
+
+        W.h(f"2.{next(s)}. Reproducibilidad", 2)
+        v = R.versions
+        W.p("Todos los análisis se realizaron con la aplicación web BiblioTopic, que ejecuta Python "
+            f"{v.get('python')} en el navegador (Pyodide) con pandas {v.get('pandas')}, scikit-learn "
+            f"{v.get('scikit-learn')}, SciPy {v.get('scipy')}, networkx {v.get('networkx')} y matplotlib "
+            f"{v.get('matplotlib')}. Se fijó la semilla aleatoria {cfg['seed']}. La configuración completa, las "
+            "tablas intermedias y la asignación de temas por documento se proporcionan como material "
+            "suplementario.")
 
     # ============================================================== RESULTADOS
-    W.h("3. Resultados", 1)
-    sec = iter(range(1, 20))
-    W.h(f"3.{next(sec)}. Descripción general del corpus", 2)
-    peak = ap.loc[ap["Articles"].idxmax()]
-    recent = py[py >= py.max() - 9]
-    half_year = int(np.median(py))
-    W.p(f"El corpus final incluyó {f(n, 0)} documentos publicados en {info['Sources (journals, books, etc.)']} "
-        f"fuentes por {f(info['Authors'], 0)} autores entre {py.min()} y {py.max()} ({W.T('T1_main_information')}). "
-        f"La producción creció a una tasa anual compuesta de {f(info['Annual growth rate (%)'])} %, con "
-        f"{f(info['Co-authors per document'])} coautores por documento y "
-        f"{f(info['Single-authored documents'], 0)} documentos de autoría única. El año más productivo fue "
-        f"{int(peak['Year'])} ({f(peak['Articles'], 0)} documentos). La mitad del corpus se publicó a partir de "
-        f"{half_year} y el {f(100 * len(recent) / n, 1)} % en los últimos diez años "
-        f"({py.max() - 9}-{py.max()}), lo que refleja un interés creciente en la temática ({W.F('annual')})."
-        + (f" El promedio de citas por documento fue de {f(info['Average citations per document'])}."
-           if "Average citations per document" in info else ""))
-    if "WoS+Scopus" in ms.get("overlap", {}):
-        ov = ms["overlap"]
-        W.p(f"Del total de registros únicos, {f(ov.get('WoS+Scopus', 0), 0)} estaban indexados en ambas bases, "
-            f"{f(ov.get('WoS', 0), 0)} solo en WoS y {f(ov.get('Scopus', 0), 0)} solo en Scopus, lo que "
-            "justifica el uso combinado de ambas fuentes.")
+    if "results" in sections:
+        W.h("3. Resultados", 1)
+        sec = num()
+        W.h(f"3.{next(sec)}. Descripción general del corpus", 2)
+        peak = ap.loc[ap["Articles"].idxmax()]
+        recent = py[py >= py.max() - 9]
+        W.p(f"El corpus final incluyó {f(n, 0)} documentos publicados en "
+            f"{info['Sources (journals, books, etc.)']} fuentes por {f(info['Authors'], 0)} autores entre "
+            f"{py.min()} y {py.max()}{ref('T1_main_information')}. La producción creció a una tasa anual "
+            f"compuesta de {f(next(v for k, v in info.items() if k.startswith('Annual growth')))} % "
+            f"({next(k for k in info if k.startswith('Annual growth')).split()[3]}), con {f(info['Co-authors per document'])} "
+            f"coautores por documento y {f(info['Single-authored documents'], 0)} documentos de autoría única. "
+            f"El año más productivo fue {int(peak['Year'])} ({f(peak['Articles'], 0)} documentos). La mitad del "
+            f"corpus se publicó a partir de {int(np.median(py))} y el {f(100 * len(recent) / n, 1)} % en los "
+            f"últimos diez años ({py.max() - 9}-{py.max()}){ref('annual')}."
+            + (f" El promedio de citas por documento fue de {f(info['Average citations per document'])}."
+               if "Average citations per document" in info else ""))
+        ov = ms.get("overlap", {})
+        if "WoS+Scopus" in ov:
+            W.p(f"Del total de registros únicos, {f(ov.get('WoS+Scopus', 0), 0)} estaban indexados en ambas "
+                f"bases, {f(ov.get('WoS', 0), 0)} solo en WoS y {f(ov.get('Scopus', 0), 0)} solo en Scopus, lo "
+                "que justifica el uso combinado de ambas fuentes.")
 
-    W.h(f"3.{next(sec)}. Fuentes y autores", 2)
-    src = T["T2_top_sources"]
-    W.p(f"Las fuentes con más publicaciones fueron {enum_es([f'{s.title()} (n = {a})' for s, a in src[['Source', 'Articles']].values[:3]])} "
-        f"({W.T('T2_top_sources')}; {W.F('sources')}). Según la ley de Bradford, {X['bradford_zone1']} de las "
-        f"{f(X['n_sources'], 0)} fuentes ({f(100 * X['bradford_zone1'] / X['n_sources'], 1)} %) concentraron "
-        "un tercio de la producción (zona núcleo). "
-        f"Los autores más productivos fueron {enum_es([f'{a} ({k})' for a, k in T['T3_top_authors'][['Author', 'Articles']].values[:5]])} "
-        f"({W.F('authors')}). En cuanto a la ley de Lotka, el "
-        f"{f(100 * T['lotka']['Proportion of authors'].iloc[0], 1)} % de los autores publicó un solo documento.")
+        if "T2_top_sources" in T:
+            W.h(f"3.{next(sec)}. Fuentes y autores", 2)
+            src = T["T2_top_sources"]
+            W.p("Las fuentes con más publicaciones fueron "
+                + enum_es([f"{s_.title()} (n = {a})" for s_, a in src[["Source", "Articles"]].values[:3]])
+                + f"{ref('T2_top_sources', 'sources')}. Según la ley de Bradford, {X['bradford_zone1']} de las "
+                f"{f(X['n_sources'], 0)} fuentes ({f(100 * X['bradford_zone1'] / X['n_sources'], 1)} %) "
+                "concentraron un tercio de la producción (zona núcleo). Los autores más productivos fueron "
+                + enum_es([f"{a} ({k})" for a, k in T["T3_top_authors"][["Author", "Articles"]].values[:5]])
+                + f"{ref('authors')}. En cuanto a la ley de Lotka, el "
+                f"{f(100 * T['lotka']['Proportion of authors'].iloc[0], 1)} % de los autores publicó un solo "
+                "documento.")
 
-    if R.has_countries:
-        W.h(f"3.{next(sec)}. Países y colaboración internacional", 2)
-        cp = T["T4_countries"]
-        W.p(f"Los países con mayor producción, según el país del autor de correspondencia, fueron "
-            f"{enum_es([f'{c} (n = {a})' for c, a in cp[['Country', 'Articles']].values[:5]])} "
-            f"({W.T('T4_countries')}; {W.F('countries')}). El {f(info.get('International co-authorship (%)', 0))} % "
-            "de los documentos tuvo coautoría internacional. Entre los diez principales, la mayor proporción "
-            f"de colaboración internacional (MCP) correspondió a "
-            f"{enum_es([f'{c} ({f(100 * r, 1)} %)' for c, r in cp.head(10).sort_values('MCP ratio', ascending=False)[['Country', 'MCP ratio']].values[:3]])}.")
-        if "collab" in FIG:
+        if R.has_countries:
+            W.h(f"3.{next(sec)}. Países y colaboración internacional", 2)
+            cp = T["T4_countries"]
+            top_mcp = cp.head(10).sort_values("MCP ratio", ascending=False)[["Country", "MCP ratio"]].values[:3]
+            W.p("Los países con mayor producción, según el país del autor de correspondencia, fueron "
+                + enum_es([f"{c} (n = {a})" for c, a in cp[["Country", "Articles"]].values[:5]])
+                + f"{ref('T4_countries', 'countries')}. El "
+                f"{f(info.get('International co-authorship (%)', 0))} % de los documentos tuvo coautoría "
+                "internacional. Entre los diez principales, la mayor proporción de colaboración internacional "
+                "(MCP) correspondió a " + enum_es([f"{c} ({f(100 * r, 1)} %)" for c, r in top_mcp]) + ".")
             cl = X.get("collab_clusters", [])
-            W.p((f"La red de colaboración ({W.F('collab')}) mostró {len(cl)} comunidades; las principales "
-                 f"estuvieron encabezadas por {enum_es([', '.join(c[:4]) for c in cl[:3]])}.") if len(cl) > 1 else
-                f"La red de colaboración ({W.F('collab')}) formó una única comunidad articulada en torno a "
-                f"{', '.join(cl[0][:4]) if cl else '—'}.")
-    else:
-        W.note("[Países y colaboración: el archivo de entrada no contiene afiliaciones (campo C1). Para incluir "
-               "esta sección, exporte desde WoS el contenido 'Full Record and Cited References' y desde "
-               "Scopus incluya 'Affiliations'.]")
-    if "kw" in FIG:
-        W.h(f"3.{next(sec)}. Palabras clave", 2)
-        kf = T["T5_keywords"]
-        W.p(f"Las palabras clave más frecuentes fueron {enum_es([f'{k} ({o})' for k, o in kf.values[:8]])}. "
-            f"La red de co-ocurrencia ({W.F('kw')}) se organizó en {len(X['kw_clusters'])} "
-            f"{'grupos' if len(X['kw_clusters']) > 1 else 'grupo'}; los "
-            "principales reunieron " + "; ".join(f"«{', '.join(c[:4])}»" for c in X["kw_clusters"][:3]) + ".")
+            if "collab" in FIG and cl:
+                W.p((f"La red de colaboración{ref('collab')} mostró {len(cl)} comunidades; las principales "
+                     f"estuvieron encabezadas por {enum_es([', '.join(c[:4]) for c in cl[:3]])}.")
+                    if len(cl) > 1 else
+                    f"La red de colaboración{ref('collab')} formó una única comunidad articulada en torno a "
+                    f"{', '.join(cl[0][:4])}.")
+        elif R.on("countries"):
+            W.note("[Países y colaboración: los archivos no contienen afiliaciones (campo C1). Exporte desde WoS "
+                   "con 'Full Record and Cited References' y desde Scopus con 'Affiliations'.]")
 
-    # ---- LDA
-    W.h(f"3.{next(sec)}. Temas identificados con LDA", 2)
-    ksel = R.ksel.set_index("K")
-    tl = C["trends_lda"]
-    order = np.argsort(-lda.prevalence)
-    hot_l = [lda.labels[i] for i in range(lda.k) if tl["Trend"][i] == "Hot"]
-    cold_l = [lda.labels[i] for i in range(lda.k) if tl["Trend"][i] == "Cold"]
-    W.p(f"El criterio combinado de las cuatro métricas indicó K = {lda.k} como número óptimo de temas "
-        f"({W.F('ksel')}); para este valor, la coherencia NPMI media fue {f(np.nanmean(lda.npmi), 3)}, la "
-        f"diversidad {f(lda.diversity, 3)} y la estabilidad media entre semillas {f(np.nanmean(lda.stab), 3)}. "
-        + ("La métrica combinada alcanzó su máximo en el límite superior del intervalo evaluado; se recomienda "
-           "ampliar el intervalo de K. " if lda.k == ksel.index.max() else "")
-        + f"Los temas, sus términos principales y su prevalencia se presentan en la {W.T('T6_LDA_topics')} y "
-        f"la {W.F('lda_words')}. ", ("[Etiquetas provisionales generadas a partir de los tres términos "
-                                    "principales: los autores deben asignar un nombre interpretativo a cada tema.]", "hl"))
-    W.p("Los temas más prevalentes fueron " + "; ".join(
-        f"{lda.ids[i]} ({f(100 * lda.prevalence[i], 1)} %), caracterizado por {', '.join(lda.top10[i][:6])}"
-        for i in order[:3]) + ". Los menos prevalentes fueron " + enum_es(
-        [f"{lda.ids[i]} ({f(100 * lda.prevalence[i], 1)} %)" for i in order[-2:]]) + ".")
-    W.p(f"Respecto a la dinámica temporal ({W.F('lda_time')}; {W.F('trends')}), "
-        + (f"{len(hot_l)} temas mostraron una tendencia creciente significativa ({tl_(hot_l)})"
-           if hot_l else "ningún tema mostró una tendencia creciente significativa")
-        + " y " + (f"{len(cold_l)} una tendencia decreciente ({tl_(cold_l)})"
-                   if cold_l else "ninguno una tendencia decreciente") + ".")
-    hj = X["hj_l"]
-    assoc = _biplot_associations(hj)
-    first_p, last_p = X["periods"][0], X["periods"][-1]
-    W.p(f"El HJ-Biplot periodo × tema de LDA ({W.F('hj_lda')}) explicó el "
-        f"{f(100 * (hj.inertia[0] + hj.inertia[1]), 1)} % de la inercia en los dos primeros ejes "
-        f"(eje 1: {f(100 * hj.inertia[0], 1)} %; eje 2: {f(100 * hj.inertia[1], 1)} %). El periodo más "
-        f"antiguo ({first_p}) se asoció con {enum_es(assoc[first_p])}, mientras que el más reciente "
-        f"({last_p}) se asoció con {enum_es(assoc[last_p])}, lo que evidencia el desplazamiento del foco de "
-        "investigación a lo largo del tiempo.")
+        if "kw" in FIG:
+            W.h(f"3.{next(sec)}. Palabras clave", 2)
+            kf, kc = T["T5_keywords"], X["kw_clusters"]
+            W.p("Las palabras clave más frecuentes fueron "
+                + enum_es([f"{k} ({o})" for k, o in kf.values[:8]])
+                + f". La red de co-ocurrencia{ref('kw')} se organizó en {len(kc)} "
+                f"{'grupos' if len(kc) > 1 else 'grupo'}; los principales reunieron "
+                + "; ".join(f"«{', '.join(c[:4])}»" for c in kc[:3]) + ".")
 
-    # ---- BERTopic
-    W.h(f"3.{next(sec)}. Temas identificados con BERTopic", 2)
-    tb = C["trends_bert"]
-    ob = np.argsort(-bert.prevalence)
-    hot_b = [bert.labels[i] for i in range(bert.k) if tb["Trend"][i] == "Hot"]
-    cold_b = [bert.labels[i] for i in range(bert.k) if tb["Trend"][i] == "Cold"]
-    W.p(f"HDBSCAN identificó {bert.native_topics} grupos semánticos"
-        + (f", que se redujeron a {bert.k} temas" if bert.native_topics != bert.k else "")
-        + f"; el {f(100 * bert.outlier_rate, 1)} % de los documentos quedó inicialmente sin asignar "
-        f"(outliers) ({W.T('T7_BERTopic_topics')}; {W.F('bert_words')}"
-        + (f"; {W.F('bert_map')}" if "bert_map" in FIG else "") + "). La coherencia NPMI media fue "
-        f"{f(np.nanmean(bert.npmi), 3)}, la diversidad {f(bert.diversity, 3)} y la estabilidad media "
-        f"{f(np.nanmean(bert.stab), 3)}. Los temas de mayor tamaño fueron " + "; ".join(
-            f"{bert.ids[i]} ({f(100 * bert.prevalence[i], 1)} %; {', '.join(bert.top10[i][:6])})"
-            for i in ob[:3]) + ".")
-    hjb = X["hj_b"]
-    ab = _biplot_associations(hjb)
-    W.p(f"En el tiempo ({W.F('bert_time')}), "
-        + (f"{len(hot_b)} temas fueron emergentes ({tl_(hot_b)})" if hot_b
-           else "ningún tema fue emergente")
-        + " y " + (f"{len(cold_b)} estuvieron en declive ({tl_(cold_b)})"
-                   if cold_b else "ninguno estuvo en declive")
-        + f". El HJ-Biplot correspondiente ({W.F('hj_bert')}) explicó el "
-        f"{f(100 * (hjb.inertia[0] + hjb.inertia[1]), 1)} % de la inercia; el periodo {last_p} se asoció "
-        f"con {enum_es(ab[last_p])}.")
+        last_p = X["periods"][-1]
+        first_p = X["periods"][0]
+        if lda is not None:
+            W.h(f"3.{next(sec)}. Temas identificados con LDA", 2)
+            order = np.argsort(-lda.prevalence)
+            txt = (f"El criterio combinado de las cuatro métricas indicó K = {lda.k} como número óptimo de "
+                   f"temas{ref('ksel')}; " if R.ksel is not None else f"Con K = {lda.k} temas, ")
+            txt += (f"la coherencia NPMI media fue {f(np.nanmean(lda.npmi), 3)} y la diversidad "
+                    f"{f(lda.diversity, 3)}"
+                    + (f"; la estabilidad media entre semillas fue {f(np.nanmean(lda.stab), 3)}" if stab_on else "")
+                    + ". ")
+            if R.ksel is not None and lda.k == R.ksel["K"].max():
+                txt += ("La métrica combinada alcanzó su máximo en el límite superior del intervalo evaluado; "
+                        "se recomienda ampliar el intervalo de K. ")
+            txt += f"Los temas, sus términos principales y su prevalencia se presentan a continuación{ref('T6_LDA_topics', 'lda_words')}. "
+            W.p(txt, ("[Revisar las etiquetas de los temas.]", "hl"))
+            W.p("Los temas más prevalentes fueron " + "; ".join(
+                f"{lda.labels[i]} ({f(100 * lda.prevalence[i], 1)} %), caracterizado por "
+                f"{', '.join(lda.top10[i][:6])}" for i in order[:3])
+                + ". Los menos prevalentes fueron "
+                + enum_es([f"{lda.labels[i]} ({f(100 * lda.prevalence[i], 1)} %)" for i in order[-2:]]) + ".")
+            if R.on("temporal") and trends_l is not None:
+                hot = [lda.labels[i] for i in range(lda.k) if trends_l["Trend"][i] == "Hot"]
+                cold = [lda.labels[i] for i in range(lda.k) if trends_l["Trend"][i] == "Cold"]
+                W.p(f"Respecto a la dinámica temporal{ref('lda_time', 'trends')}, "
+                    + (f"{pl(len(hot), 'tema mostró', 'temas mostraron')} una tendencia creciente significativa ({tl_(hot)})"
+                       if hot else "ningún tema mostró una tendencia creciente significativa")
+                    + " y " + (f"{len(cold)} una tendencia decreciente ({tl_(cold)})"
+                               if cold else "ninguno una tendencia decreciente") + ".")
+            if "hj_l" in X:
+                hj = X["hj_l"]
+                a = _biplot_associations(hj)
+                W.p(f"El HJ-Biplot periodo × tema de LDA{ref('hj_lda')} explicó el "
+                    f"{f(100 * (hj.inertia[0] + hj.inertia[1]), 1)} % de la inercia en los dos primeros ejes "
+                    f"(eje 1: {f(100 * hj.inertia[0], 1)} %; eje 2: {f(100 * hj.inertia[1], 1)} %). El periodo "
+                    f"más antiguo ({first_p}) se asoció con {enum_es(a[first_p])}, mientras que el más reciente "
+                    f"({last_p}) se asoció con {enum_es(a[last_p])}.")
 
-    # ---- comparación
-    W.h(f"3.{next(sec)}. Comparación entre LDA y BERTopic", 2)
-    mt = C["metrics"].set_index("Metric")
-    ag = C["agreement"]
-    m = C["matches"]
-    rob = m[m["Agreement"] == "Robust"]
-    par = m[m["Agreement"] == "Partial"]
-    div = m[m["Agreement"] == "Divergent"]
-    better = lambda metric: ("LDA" if mt.loc[metric, "LDA"] > mt.loc[metric, "BERTopic"] else "BERTopic")  # noqa: E731
-    W.p(f"La {W.T('T8_model_metrics')} resume la calidad de ambos modelos. {better('Mean NPMI coherence')} "
-        f"obtuvo mayor coherencia NPMI ({f(mt.loc['Mean NPMI coherence', 'LDA'], 3)} en LDA frente a "
-        f"{f(mt.loc['Mean NPMI coherence', 'BERTopic'], 3)} en BERTopic), {better('Topic diversity (top-25)')} "
-        f"mayor diversidad ({f(mt.loc['Topic diversity (top-25)', 'LDA'], 3)} frente a "
-        f"{f(mt.loc['Topic diversity (top-25)', 'BERTopic'], 3)}) y {better('Mean topic stability (cosine across seeds)')} "
-        f"mayor estabilidad entre semillas ({f(mt.loc['Mean topic stability (cosine across seeds)', 'LDA'], 3)} "
-        f"frente a {f(mt.loc['Mean topic stability (cosine across seeds)', 'BERTopic'], 3)}).")
-    W.p(f"El emparejamiento óptimo entre temas ({W.F('sim')}; {W.T('T9_topic_alignment')}) identificó "
-        f"{len(rob)} pares convergentes (coseno ≥ {cfg['tau_strong']}), {len(par)} parciales y {len(div)} "
-        "divergentes. "
-        + ("Los temas convergentes con mayor índice de robustez fueron " + "; ".join(
-            f"{r['LDA topic'].split(':')[0]}–{r['BERTopic topic'].split(':')[0]} (coseno = {f(r['Cosine'], 2)}; "
-            f"TRI = {f(r['TRI'], 2)}; términos compartidos: {r['Shared terms'] or '—'})"
-            for _, r in rob.sort_values('TRI', ascending=False).head(4).iterrows()) + ". "
-           if len(rob) else "")
-        + ("Estos temas, detectados de forma independiente por un modelo probabilístico basado en "
-           "frecuencias y por otro basado en semántica contextual, constituyen el núcleo temático más sólido "
-           "del campo. " if len(rob) else
-           "Ningún par alcanzó el umbral de convergencia; los pares con mayor correspondencia fueron " + "; ".join(
-               f"{r['LDA topic'].split(':')[0]}–{r['BERTopic topic'].split(':')[0]} (coseno = {f(r['Cosine'], 2)}; "
-               f"términos compartidos: {r['Shared terms'] or '—'})"
-               for _, r in par.sort_values('TRI', ascending=False).head(4).iterrows())
-           + ", que representan los temas más consistentes entre ambos enfoques. ")
-        + ("Por el contrario, " + enum_es([f"{r['LDA topic'].split(':')[0]} y {r['BERTopic topic'].split(':')[0]}"
-                                           for _, r in div.head(3).iterrows()])
-           + " no encontraron un equivalente claro en el otro modelo, lo que sugiere temas sensibles al método "
-           "que deben interpretarse con cautela." if len(div) else ""))
-    W.p(f"A nivel de documento ({W.F('cont')}), la coincidencia entre la asignación de LDA y la de BERTopic "
-        f"fue ARI = {f(ag['ARI (all documents)'], 3)} y NMI = {f(ag['NMI (all documents)'], 3)} "
-        f"(excluyendo outliers: ARI = {f(ag['ARI (non-outliers)'], 3)}; NMI = {f(ag['NMI (non-outliers)'], 3)}). "
-        + (f"En los temas emparejados (convergentes y parciales), ambos modelos coincidieron en la "
-           f"clasificación temporal en el {f(100 * ag['Trend agreement in matched topics'], 1)} % de los casos."
-           if not np.isnan(ag["Trend agreement in matched topics"]) else ""))
-    if R.has_countries and "hj_country" in FIG:
-        hjc = X["hj_country"]
-        ac = _biplot_associations(hjc, 2)
-        top3 = list(hjc.rows.index[:4])
-        W.h(f"3.{next(sec)}. Especialización temática de los países", 2)
-        W.p(f"El HJ-Biplot país × tema ({W.F('hj_country')}) explicó el "
-            f"{f(100 * (hjc.inertia[0] + hjc.inertia[1]), 1)} % de la inercia. " + "; ".join(
-                f"{c} se asoció con {enum_es(ac[c])}" for c in top3) + ".")
-    if "strategic" in FIG:
-        W.p(f"El mapa estratégico ({W.F('strategic')}) cruza el crecimiento y el impacto (citas por año) de "
-            "cada tema de LDA: los temas del cuadrante superior derecho combinan crecimiento e impacto "
-            "elevados y representan frentes de investigación consolidados en expansión.")
+        if bert is not None:
+            W.h(f"3.{next(sec)}. Temas identificados con BERTopic", 2)
+            ob = np.argsort(-bert.prevalence)
+            W.p(f"HDBSCAN identificó {pl(bert.native_topics, 'grupo semántico', 'grupos semánticos')}"
+                + (f", que se redujeron a {bert.k} temas" if bert.native_topics != bert.k else "")
+                + f"; el {f(100 * bert.outlier_rate, 1)} % de los documentos quedó inicialmente sin asignar "
+                f"(outliers){ref('T7_BERTopic_topics', 'bert_words', 'bert_map')}. La coherencia NPMI media "
+                f"fue {f(np.nanmean(bert.npmi), 3)} y la diversidad {f(bert.diversity, 3)}"
+                + (f"; la estabilidad media fue {f(np.nanmean(bert.stab), 3)}" if bert.n_stab else "")
+                + ". Los temas de mayor tamaño fueron " + "; ".join(
+                    f"{bert.labels[i]} ({f(100 * bert.prevalence[i], 1)} %; {', '.join(bert.top10[i][:6])})"
+                    for i in ob[:3]) + ".")
+            txt = ""
+            if R.on("temporal") and trends_b is not None:
+                hot = [bert.labels[i] for i in range(bert.k) if trends_b["Trend"][i] == "Hot"]
+                cold = [bert.labels[i] for i in range(bert.k) if trends_b["Trend"][i] == "Cold"]
+                txt += (f"En el tiempo{ref('bert_time')}, "
+                        + (f"{pl(len(hot), 'tema fue emergente', 'temas fueron emergentes')} ({tl_(hot)})" if hot else "ningún tema fue emergente")
+                        + " y " + (f"{pl(len(cold), 'estuvo', 'estuvieron')} en declive ({tl_(cold)})" if cold
+                                   else "ninguno estuvo en declive") + ". ")
+            if "hj_b" in X:
+                hjb = X["hj_b"]
+                ab = _biplot_associations(hjb)
+                txt += (f"El HJ-Biplot correspondiente{ref('hj_bert')} explicó el "
+                        f"{f(100 * (hjb.inertia[0] + hjb.inertia[1]), 1)} % de la inercia; el periodo {last_p} "
+                        f"se asoció con {enum_es(ab[last_p])}.")
+            if txt:
+                W.p(txt)
 
-    # ============================================================== FIGURAS / TABLAS
-    W.doc.add_page_break()
-    W.h("Tables", 1)
-    tcap = {
-        "T1_main_information": ("Main information about the corpus.", None),
-        "T2_top_sources": ("Most relevant sources.", None),
-        "T4_countries": ("Most productive countries (corresponding author).",
-                         "SCP: single-country publications; MCP: multiple-country publications."),
-        "T6_LDA_topics": ("Topics identified by LDA.",
-                          "Labels are provisional. Prevalence: mean document–topic probability. "
-                          "Stability: mean cosine similarity with matched topics across random seeds."),
-        "T7_BERTopic_topics": ("Topics identified by BERTopic.",
-                               "Prevalence computed after outlier reassignment."),
-        "T8_model_metrics": ("Comparison of model quality metrics.", None),
-        "T9_topic_alignment": ("Alignment between LDA and BERTopic topics (Hungarian matching).",
-                               "TRI: Topic Robustness Index = cosine × √(stability_LDA × stability_BERTopic)."),
-    }
-    for k in tab_order:
-        t = T[k]
-        if k == "T9_topic_alignment":
-            t = t[["LDA topic", "BERTopic topic", "Cosine", "Jaccard top-10", "TRI", "Agreement",
-                   "Trend LDA", "Trend BERTopic"]]
-        if k == "T2_top_sources":
-            t = t.head(10)
-        W.table(k, t, *tcap[k])
-    W.doc.add_page_break()
-    W.h("Figures", 1)
-    fcap = {
-        "prisma": "Flow diagram of record identification, deduplication and screening (adapted from PRISMA 2020).",
-        "annual": "Annual scientific production" + (" and mean citations per year." if "MeanTCperYear" in ap else "."),
-        "sources": "Most relevant sources by number of documents.",
-        "authors": "Most productive authors.",
-        "countries": "Most productive countries by corresponding author; SCP: single-country publications; MCP: multiple-country publications.",
-        "collab": "Country collaboration network. Node size: number of documents; colours: Louvain communities.",
-        "kw": "Keyword co-occurrence network. Node size: occurrences; colours: Louvain communities.",
-        "ksel": "Selection of the number of LDA topics (K) with four normalised metrics. Dashed line: selected K.",
-        "lda_words": "Top terms of the LDA topics (word–topic probability).",
-        "lda_time": "Mean prevalence of LDA topics by period.",
-        "hj_lda": "HJ-Biplot of periods (points) and LDA topics (vectors).",
-        "bert_words": "Top terms of the BERTopic topics (c-TF-IDF weight).",
-        "bert_map": "Two-dimensional UMAP projection of document embeddings coloured by BERTopic topic; grey: outliers.",
-        "bert_time": "Prevalence of BERTopic topics by period.",
-        "hj_bert": "HJ-Biplot of periods (points) and BERTopic topics (vectors).",
-        "sim": "Cosine similarity between LDA and BERTopic topics; white boxes mark the optimal one-to-one matching.",
-        "cont": "Document-level agreement: proportion of documents of each LDA dominant topic assigned to each BERTopic topic.",
-        "trends": "Linear trend of the annual prevalence of each topic. Red: hot (p < 0.05, positive slope); blue: cold (p < 0.05, negative slope).",
-        "hj_country": "HJ-Biplot of the most productive countries (points) and LDA topics (vectors).",
-        "strategic": "Strategic map of LDA topics: growth (slope) versus impact (citations per year); bubble size: prevalence.",
-    }
-    for k in fig_order:
-        W.figure(k, FIG[k], fcap[k])
+        if C is not None:
+            W.h(f"3.{next(sec)}. Comparación entre LDA y BERTopic", 2)
+            mt = C["metrics"].set_index("Metric")
+            ag = C["agreement"]
+            m = C["matches"]
+            rob, par, div = (m[m["Agreement"] == a] for a in ("Robust", "Partial", "Divergent"))
 
-    W.h("Referencias (métodos)", 1)
-    for k in sorted(used, key=lambda x: REFS[x]):
-        p = W.doc.add_paragraph(REFS[k])
-        p.paragraph_format.left_indent = Cm(0.75)
-        p.paragraph_format.first_line_indent = Cm(-0.75)
+            def cmp(metric, name):
+                a, b = mt.loc[metric, "LDA"], mt.loc[metric, "BERTopic"]
+                who = "LDA" if a > b else "BERTopic"
+                return f"{who} obtuvo mayor {name} ({f(a, 3)} en LDA frente a {f(b, 3)} en BERTopic)"
+            parts = [cmp("Mean NPMI coherence", "coherencia NPMI"), cmp("Topic diversity (top-25)", "diversidad")]
+            if stab_on:
+                parts.append(cmp("Mean topic stability (cosine across seeds)", "estabilidad entre semillas"))
+            W.p(f"La comparación de la calidad de ambos modelos{ref('T8_model_metrics')} mostró que "
+                + enum_es(parts) + ".")
+
+            def pairs(df_, k=4):
+                return "; ".join(
+                    f"{r['LDA topic']} – {r['BERTopic topic']} (coseno = {f(r['Cosine'], 2)}"
+                    + (f"; TRI = {f(r['TRI'], 2)}" if stab_on else "")
+                    + f"; términos compartidos: {r['Shared terms'] or '—'})"
+                    for _, r in df_.sort_values("Cosine", ascending=False).head(k).iterrows())
+            W.p(f"El emparejamiento óptimo entre temas{ref('sim', 'T9_topic_alignment')} identificó "
+                f"{pl(len(rob), 'par convergente', 'pares convergentes')} (coseno ≥ {cfg['tau_strong']}), "
+                f"{pl(len(par), 'parcial', 'parciales')} y {pl(len(div), 'divergente', 'divergentes')}. "
+                + (f"Los pares convergentes fueron {pairs(rob)}. Estos temas, detectados de forma independiente "
+                   "por un modelo probabilístico basado en frecuencias y por otro basado en semántica "
+                   "contextual, constituyen el núcleo temático más sólido del campo. " if len(rob) else
+                   f"Ningún par alcanzó el umbral de convergencia; los de mayor correspondencia fueron "
+                   f"{pairs(par)}. " if len(par) else "")
+                + ("Por el contrario, " + enum_es([f"{r['LDA topic'].split(':')[0]} y "
+                                                   f"{r['BERTopic topic'].split(':')[0]}"
+                                                   for _, r in div.head(3).iterrows()])
+                   + " no encontraron un equivalente claro en el otro modelo, lo que sugiere temas sensibles al "
+                   "método que deben interpretarse con cautela." if len(div) else ""))
+            tag = ag.get("Trend agreement in matched topics", np.nan)
+            W.p(f"A nivel de documento{ref('cont')}, la coincidencia entre la asignación de LDA y la de "
+                f"BERTopic fue ARI = {f(ag['ARI (all documents)'], 3)} y NMI = {f(ag['NMI (all documents)'], 3)} "
+                f"(excluyendo outliers: ARI = {f(ag['ARI (non-outliers)'], 3)}; NMI = "
+                f"{f(ag['NMI (non-outliers)'], 3)})."
+                + (f" En los temas emparejados, ambos modelos coincidieron en la clasificación temporal en el "
+                   f"{f(100 * tag, 1)} % de los casos." if R.on("temporal") and not np.isnan(tag) else ""))
+
+        if "hj_country" in FIG:
+            hjc = X["hj_country"]
+            ac = _biplot_associations(hjc, 2)
+            W.h(f"3.{next(sec)}. Especialización temática de los países", 2)
+            W.p(f"El HJ-Biplot país × tema{ref('hj_country')} explicó el "
+                f"{f(100 * (hjc.inertia[0] + hjc.inertia[1]), 1)} % de la inercia. "
+                + "; ".join(f"{c} se asoció con {enum_es(ac[c])}" for c in list(hjc.rows.index[:4])) + ".")
+        if "strategic" in FIG:
+            W.p(f"El mapa estratégico{ref('strategic')} cruza el crecimiento y el impacto (citas por año) de "
+                "cada tema de LDA: los temas del cuadrante superior derecho combinan crecimiento e impacto "
+                "elevados y representan frentes de investigación consolidados en expansión.")
+
+    # ============================================================== TABLAS / FIGURAS
+    if "tables" in sections and W.tab_no:
+        W.doc.add_page_break()
+        W.h("Tables", 1)
+        for k in W.tab_no:
+            t = T[k]
+            if k == "T9_topic_alignment":
+                cols = ["LDA topic", "BERTopic topic", "Cosine", "Jaccard top-10", "TRI", "Agreement",
+                        "Trend LDA", "Trend BERTopic"]
+                t = t[[c for c in cols if c in t.columns]]
+            if k == "T2_top_sources":
+                t = t.head(10)
+            W.table(k, t, *TAB_CAPTIONS[k])
+    if "figures" in sections and W.fig_no:
+        W.doc.add_page_break()
+        W.h("Figures", 1)
+        for k in W.fig_no:
+            cap = FIG_CAPTIONS[k]
+            if k == "annual" and "MeanTCperYear" in ap:
+                cap = "Annual scientific production and mean citations per year."
+            W.figure(k, FIG[k], cap)
+    if "references" in sections and used:
+        W.h("Referencias (métodos)", 1)
+        for k in sorted(used, key=lambda x: REFS[x]):
+            p = W.doc.add_paragraph(REFS[k])
+            p.paragraph_format.left_indent = Cm(0.75)
+            p.paragraph_format.first_line_indent = Cm(-0.75)
     W.doc.save(path)
     return path

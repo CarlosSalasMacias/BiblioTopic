@@ -261,8 +261,12 @@ def contingency(path, cont, title):
 
 
 def trends(path, tl, tb, lda_labels, bert_labels):
-    fig, axes = plt.subplots(1, 2, figsize=(9, 0.28 * max(len(tl), len(tb)) + 1.6))
-    for ax, t, labs, name in [(axes[0], tl, lda_labels, "LDA"), (axes[1], tb, bert_labels, "BERTopic")]:
+    panels = [(t, labs, name) for t, labs, name in
+              [(tl, lda_labels, "LDA"), (tb, bert_labels, "BERTopic")] if t is not None]
+    n = max(len(p[0]) for p in panels)
+    fig, axes = plt.subplots(1, len(panels), figsize=(4.5 * len(panels), 0.28 * n + 1.6))
+    axes = np.atleast_1d(axes)
+    for ax, (t, labs, name) in zip(axes, panels):
         order = np.argsort(t["Slope"].values)
         cols = [RED if t["Trend"][i] == "Hot" else BLUE if t["Trend"][i] == "Cold" else "#bbbbbb"
                 for i in order]

@@ -1,14 +1,12 @@
+# Solo para la ejecución local opcional (run_cli.py). La versión web no necesita instalar nada.
 pandas>=2.0
 numpy>=1.26
 scipy>=1.11
-scikit-learn>=1.4
-bertopic>=0.16
-sentence-transformers>=2.7
-umap-learn>=0.5.5
-hdbscan>=0.8.33
+scikit-learn>=1.3
 networkx>=3.2
 matplotlib>=3.8
 openpyxl>=3.1
 python-docx>=1.1
 pycountry>=23.12
-streamlit>=1.38
+umap-learn>=0.5.5
+sentence-transformers>=2.7

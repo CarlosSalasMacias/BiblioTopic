@@ -1,7 +1,7 @@
 {
   "meta": {"topic_name": "Coffea arabica", "query": "TS=(\"Coffea arabica\")", "search_date": "31/10/2026"},
+  "year_min": 1990, "year_max": 2025,
   "query_terms": ["coffee", "coffea"],
-  "k_min": 4, "k_max": 24, "k_step": 2,
-  "n_stab_lda": 4, "n_stab_bert": 3,
-  "output_dir": "resultados/cli"
+  "k_min": 5, "k_max": 30, "k_step": 5,
+  "output_dir": "resultados"
 }

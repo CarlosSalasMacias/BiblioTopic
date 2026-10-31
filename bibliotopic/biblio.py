@@ -100,9 +100,12 @@ def main_information(df: pd.DataFrame, has_countries: bool) -> dict:
     py = df["PY"].dropna().astype(int)
     first, last = int(py.min()), int(py.max())
     yearly = py.value_counts().sort_index()
+    # crecimiento hasta el último año completo (excluye el año en curso y los de acceso anticipado)
+    last_full = min(last, pd.Timestamp.now().year - 1)
     n_first = yearly.iloc[0]
-    n_last = yearly.iloc[-1]
-    cagr = ((n_last / n_first) ** (1 / max(last - first, 1)) - 1) * 100 if n_first else np.nan
+    n_last = yearly.get(last_full, 0)
+    cagr = (((n_last / n_first) ** (1 / max(last_full - first, 1)) - 1) * 100
+            if n_first and n_last and last_full > first else np.nan)
     authors = df["AU"].map(split_list)
     n_auth = authors.map(len)
     all_auth = Counter(itertools.chain.from_iterable(authors))
@@ -110,7 +113,7 @@ def main_information(df: pd.DataFrame, has_countries: bool) -> dict:
         "Timespan": f"{first}-{last}",
         "Sources (journals, books, etc.)": df["SO"].str.upper().nunique(),
         "Documents": len(df),
-        "Annual growth rate (%)": round(cagr, 2),
+        f"Annual growth rate {first}-{last_full} (%)": round(cagr, 2),
         "Document average age (years)": round(float((pd.Timestamp.now().year - py).mean()), 2),
         "Authors": len(all_auth),
         "Single-authored documents": int((n_auth == 1).sum()),

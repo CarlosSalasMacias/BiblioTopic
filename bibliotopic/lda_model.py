@@ -11,10 +11,11 @@ from sklearn.metrics.pairwise import cosine_similarity
 from .text import Corpus, topic_diversity
 
 
-def fit_lda(X, k, seed=42, max_iter=60):
-    m = LatentDirichletAllocation(n_components=k, learning_method="batch", max_iter=max_iter,
-                                  random_state=seed, doc_topic_prior=None, topic_word_prior=None,
-                                  evaluate_every=-1, n_jobs=-1)
+def fit_lda(X, k, seed=42, max_iter=20):
+    # inferencia variacional en línea (Hoffman et al., 2010): rápida también en el navegador
+    m = LatentDirichletAllocation(n_components=k, learning_method="online", max_iter=max_iter,
+                                  batch_size=256, learning_offset=10.0, random_state=seed,
+                                  evaluate_every=-1, n_jobs=None)
     theta = m.fit_transform(X)
     beta = m.components_ / m.components_.sum(axis=1, keepdims=True)
     return m, theta, beta
@@ -47,7 +48,7 @@ def deveaud(beta):  # Deveaud et al. (2014): mayor es mejor
     return float(np.mean(js)) if js else 0.0
 
 
-def select_k(corpus: Corpus, ks, seed=42, max_iter=40, progress=None) -> pd.DataFrame:
+def select_k(corpus: Corpus, ks, seed=42, max_iter=10, progress=None) -> pd.DataFrame:
     doc_len = np.asarray(corpus.X.sum(axis=1)).ravel()
     rows = []
     for i, k in enumerate(ks):
@@ -81,7 +82,7 @@ def match_topics(A, B):
     return r, c, s
 
 
-def stability(corpus: Corpus, k, beta_ref, seeds=(1, 2, 3, 4), max_iter=60):
+def stability(corpus: Corpus, k, beta_ref, seeds=(1, 2, 3, 4), max_iter=20):
     """Similitud media de cada tema de referencia con su mejor par en réplicas con otra semilla."""
     sims = np.zeros((len(seeds), k))
     for i, s in enumerate(seeds):
@@ -92,7 +93,7 @@ def stability(corpus: Corpus, k, beta_ref, seeds=(1, 2, 3, 4), max_iter=60):
 
 
 class LDAResult:
-    def __init__(self, corpus: Corpus, k: int, seed=42, n_stab=4, max_iter=60):
+    def __init__(self, corpus: Corpus, k: int, seed=42, n_stab=4, max_iter=20):
         self.k = k
         self.model, self.theta, self.beta = fit_lda(corpus.X, k, seed, max_iter)
         self.top10 = top_words(self.beta, corpus.vocab, 10)

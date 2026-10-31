@@ -1,0 +1,209 @@
+// BiblioTopic — worker: Python (Pyodide) + embeddings (transformers.js) + UMAP (umap-js).
+import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodide.mjs";
+import { UMAP } from "https://cdn.jsdelivr.net/npm/umap-js@1.4.0/+esm";
+
+const PY_FILES = ["__init__.py", "io.py", "biblio.py", "text.py", "lda_model.py", "bert_model.py",
+  "hjbiplot.py", "compare.py", "figures.py", "report.py", "pipeline.py"];
+const EMB_MODEL = "Xenova/all-MiniLM-L6-v2";
+const TRANSFORMERS_URL = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.1";
+
+let py = null;
+const post = (type, data = {}, transfer = []) => self.postMessage({ type, ...data }, transfer);
+const progress = (p, msg) => post("progress", { p, msg });
+
+// Generador pseudoaleatorio con semilla (mulberry32) para UMAP reproducible
+function rng(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+async function init() {
+  progress(0.02, "Cargando Python en el navegador…");
+  py = await loadPyodide();
+  progress(0.25, "Cargando librerías científicas (numpy, pandas, scikit-learn, matplotlib)…");
+  await py.loadPackage(["numpy", "pandas", "scipy", "scikit-learn", "matplotlib", "networkx",
+    "micropip", "lxml"]);
+  progress(0.75, "Instalando python-docx, openpyxl y pycountry…");
+  const micropip = py.pyimport("micropip");
+  await micropip.install(["python-docx", "openpyxl", "pycountry"]);
+  progress(0.9, "Cargando BiblioTopic…");
+  py.FS.mkdirTree("/home/pyodide/bibliotopic");
+  const base = new URL("../bibliotopic/", import.meta.url);
+  for (const f of PY_FILES) {
+    const txt = await (await fetch(new URL(f, base), { cache: "no-cache" })).text();
+    py.FS.writeFile(`/home/pyodide/bibliotopic/${f}`, txt);
+  }
+  await py.runPythonAsync(`
+import sys, json, warnings
+warnings.filterwarnings("ignore")
+sys.path.insert(0, "/home/pyodide")
+import numpy as np
+from bibliotopic import pipeline, report
+from bibliotopic.bert_model import lsa_embeddings
+S = pipeline.Session()
+`);
+  const analyses = JSON.parse(py.runPython("json.dumps(pipeline.ANALYSES, ensure_ascii=False)"));
+  const sections = JSON.parse(py.runPython("json.dumps(report.SECTIONS, ensure_ascii=False)"));
+  progress(1, "Listo");
+  post("ready", { analyses, sections });
+}
+
+function callPy(code, args = {}) {
+  for (const [k, v] of Object.entries(args)) py.globals.set(k, v);
+  return py.runPythonAsync(code);
+}
+
+async function loadFiles(files) {
+  progress(0.1, "Leyendo y fusionando archivos…");
+  py.globals.set("_files", files.map((f) => [f.name, f.data]));
+  const out = await py.runPythonAsync(`
+_f = [(str(f[0]), f[1].to_bytes()) for f in _files]
+json.dumps(S.load(_f), ensure_ascii=False, default=str)
+`);
+  progress(1, "Archivos cargados");
+  post("loaded", { summary: JSON.parse(out) });
+}
+
+// ---------------------------------------------------------------- embeddings
+async function embed(texts) {
+  try {
+    progress(0.0, "Descargando el modelo de lenguaje (MiniLM, ~90 MB la primera vez)…");
+    const { pipeline, env } = await import(TRANSFORMERS_URL);
+    env.allowLocalModels = false;
+    let device = "wasm";
+    if (self.navigator?.gpu) {
+      try { if (await navigator.gpu.requestAdapter()) device = "webgpu"; } catch (e) { /* wasm */ }
+    }
+    const extractor = await pipeline("feature-extraction", EMB_MODEL, { device, dtype: "fp32" });
+    const n = texts.length, dim = 384, out = new Float32Array(n * dim), bs = 32;
+    for (let i = 0; i < n; i += bs) {
+      const batch = texts.slice(i, i + bs);
+      const t = await extractor(batch, { pooling: "mean", normalize: true });
+      out.set(t.data, i * dim);
+      progress(i / n, `Embeddings ${Math.min(i + bs, n)} / ${n} (${device})`);
+    }
+    return { data: out, dim, name: "all-MiniLM-L6-v2 (sentence-transformers, ONNX vía transformers.js)" };
+  } catch (e) {
+    post("warn", { msg: "No se pudo usar el modelo de lenguaje (" + e.message + "). Se usa LSA (TF-IDF + SVD)." });
+    const arr = await py.runPythonAsync(`_e = lsa_embeddings(S.texts()); _e.tobytes()`);
+    const dim = py.runPython("_e.shape[1]");
+    const u8 = arr.toJs();
+    const data = new Float32Array(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength));
+    arr.destroy();
+    return { data, dim, name: "LSA fallback (TF-IDF + SVD)" };
+  }
+}
+
+async function umap(rows, nComponents, minDist, seed, label) {
+  const u = new UMAP({ nComponents, nNeighbors: 15, minDist, random: rng(seed) });
+  const nEpochs = u.initializeFit(rows);
+  for (let i = 0; i < nEpochs; i++) {
+    u.step();
+    if (i % 25 === 0) {
+      progress(i / nEpochs, `${label}: época ${i} / ${nEpochs}`);
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  }
+  return Float32Array.from(u.getEmbedding().flat());
+}
+
+// ------------------------------------------------------------------ análisis
+async function run(cfg) {
+  const t0 = Date.now();
+  const stage = (s) => post("stage", { stage: s, elapsed: (Date.now() - t0) / 1000 });
+  stage("Filtrando y preprocesando el texto");
+  const prep = JSON.parse(await callPy(
+    "json.dumps(S.prepare(json.loads(_cfg)), ensure_ascii=False, default=str)", { _cfg: JSON.stringify(cfg) }));
+  post("prepared", { prep });
+  const on = (a) => cfg.analyses.includes(a);
+  const pyProgress = (p, m) => progress(p, m);
+  if (on("lda")) {
+    stage("LDA: selección de K y modelo final");
+    py.globals.set("_prog", pyProgress);
+    await py.runPythonAsync("S.run_lda(lambda p, m: _prog(p, m))");
+  }
+  if (on("bertopic")) {
+    stage("BERTopic: embeddings de los documentos");
+    const texts = py.runPython("S.texts()").toJs();
+    const emb = await embed(texts);
+    const n = texts.length, rows = [];
+    for (let i = 0; i < n; i++) rows.push(Array.from(emb.data.subarray(i * emb.dim, (i + 1) * emb.dim)));
+    const runs = py.runPython("S.n_umap_runs()");
+    const reduced = [];
+    for (let r = 0; r < runs; r++) {
+      stage(`BERTopic: UMAP ${r + 1} de ${runs}${r ? " (estabilidad)" : ""}`);
+      reduced.push(await umap(rows, 5, 0.0, cfg.seed + r, `UMAP ${r + 1}/${runs}`));
+    }
+    stage("BERTopic: mapa 2D de documentos");
+    const xy = await umap(rows, 2, 0.1, cfg.seed, "UMAP 2D");
+    stage("BERTopic: HDBSCAN y c-TF-IDF");
+    py.globals.set("_red", reduced);
+    py.globals.set("_xy", xy);
+    py.globals.set("_emb_name", emb.name);
+    await py.runPythonAsync(`
+_n = len(S.texts())
+_reds = [np.frombuffer(r.to_bytes(), dtype=np.float32).reshape(_n, 5) for r in _red]
+_xy2 = np.frombuffer(_xy.to_bytes(), dtype=np.float32).reshape(_n, 2)
+S.run_bertopic(_reds, _xy2, _emb_name)
+`);
+  }
+  stage("Generando figuras y tablas");
+  await render();
+  post("done", { elapsed: (Date.now() - t0) / 1000 });
+}
+
+async function render() {
+  const figs = JSON.parse(await py.runPythonAsync("json.dumps(S.render('/out'))"));
+  const out = [];
+  const transfer = [];
+  for (const f of figs) {
+    const data = py.FS.readFile(f.path);
+    out.push({ key: f.key, name: f.path.split("/").pop(), data });
+    transfer.push(data.buffer);
+  }
+  const tables = JSON.parse(await py.runPythonAsync(`
+json.dumps({k: S.table_json(k) for k in ["T1_main_information", "T2_top_sources", "T3_top_authors",
+            "T4_countries", "T5_keywords", "T6_LDA_topics", "T7_BERTopic_topics", "T8_model_metrics",
+            "doc_agreement", "T9_topic_alignment"]}, ensure_ascii=False, default=str)`));
+  const labels = JSON.parse(py.runPython("json.dumps(S.topic_labels(), ensure_ascii=False)"));
+  post("results", { figs: out, tables, labels }, transfer);
+}
+
+async function setLabels(labels) {
+  await callPy("S.set_labels(json.loads(_lab))", { _lab: JSON.stringify(labels) });
+  await render();
+}
+
+async function buildReport(meta, sections) {
+  await callPy(`report.build(S, "/out/Borrador_Metodos_Resultados.docx", json.loads(_meta), json.loads(_sec))`,
+    { _meta: JSON.stringify(meta), _sec: JSON.stringify(sections) });
+  const data = py.FS.readFile("/out/Borrador_Metodos_Resultados.docx");
+  post("file", { name: "Borrador_Metodos_Resultados.docx", data,
+    mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }, [data.buffer]);
+}
+
+async function zipAll() {
+  const b = await py.runPythonAsync("S.zip_outputs('/out')");
+  const data = b.toJs();
+  b.destroy();
+  post("file", { name: "BiblioTopic_resultados.zip", data, mime: "application/zip" }, [data.buffer]);
+}
+
+self.onmessage = async (ev) => {
+  const { cmd } = ev.data;
+  try {
+    if (cmd === "init") await init();
+    else if (cmd === "load") await loadFiles(ev.data.files);
+    else if (cmd === "run") await run(ev.data.cfg);
+    else if (cmd === "labels") await setLabels(ev.data.labels);
+    else if (cmd === "report") await buildReport(ev.data.meta, ev.data.sections);
+    else if (cmd === "zip") await zipAll();
+  } catch (e) {
+    post("error", { msg: String(e.message || e) });
+  }
+};

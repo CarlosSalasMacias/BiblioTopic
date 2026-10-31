@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BiblioTopic</title>
+<meta name="description" content="Bibliometría, LDA, BERTopic y HJ-Biplot sobre corpus de Web of Science y Scopus, con borrador de Métodos y Resultados.">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>BiblioTopic</h1>
+    <p class="sub">Bibliometría · LDA · BERTopic · HJ-Biplot · Borrador del artículo</p>
+    <div id="env" class="env"><span class="dot"></span><span id="env-msg">Preparando el entorno…</span>
+      <div class="bar small"><div id="env-bar"></div></div></div>
+  </div>
+</header>
+
+<main class="wrap">
+  <p class="privacy">Todo se ejecuta en su navegador: los archivos no se suben a ningún servidor.
+    La primera vez la carga tarda 1–2 minutos.</p>
+
+  <!-- 1. DATOS -->
+  <section class="card" id="s-data">
+    <h2><span class="n">1</span> Cargar el corpus</h2>
+    <div class="uploads">
+      <label class="drop" id="drop-scopus">
+        <input type="file" id="f-scopus" accept=".csv,.zip" multiple disabled>
+        <strong>Scopus</strong>
+        <span>Archivo CSV (o .zip)</span>
+        <em id="l-scopus">Ningún archivo</em>
+      </label>
+      <label class="drop" id="drop-wos">
+        <input type="file" id="f-wos" accept=".txt,.tsv,.zip" multiple disabled>
+        <strong>Web of Science</strong>
+        <span>Uno o varios lotes .txt (o .zip)</span>
+        <em id="l-wos">Ningún archivo</em>
+      </label>
+    </div>
+    <p class="hint">WoS: <em>Export → Tab delimited file</em>, contenido <em>Full Record and Cited References</em>.
+      Scopus: <em>Export → CSV</em> con todos los campos.</p>
+    <button id="b-load" class="primary" disabled>Cargar y fusionar</button>
+    <div id="summary" hidden></div>
+  </section>
+
+  <!-- 2. ANÁLISIS -->
+  <section class="card" id="s-analyses" hidden>
+    <h2><span class="n">2</span> Análisis a realizar</h2>
+    <div id="analyses" class="checks"></div>
+    <details>
+      <summary>Opciones avanzadas</summary>
+      <div class="grid">
+        <label>Año desde <input type="number" id="o-ymin"></label>
+        <label>Año hasta <input type="number" id="o-ymax"></label>
+        <label class="wide">Tipos de documento <span id="o-dt" class="chips"></span></label>
+        <label class="wide">Idiomas <span id="o-la" class="chips"></span></label>
+        <label class="wide">Términos de la búsqueda a excluir del texto (separados por coma)
+          <input type="text" id="o-q" placeholder="p. ej.: coffee, coffea"></label>
+        <label class="wide">Palabras vacías adicionales (separadas por coma)
+          <input type="text" id="o-sw"></label>
+        <label>K mínimo <input type="number" id="o-kmin" value="5" min="2"></label>
+        <label>K máximo <input type="number" id="o-kmax" value="30" min="3"></label>
+        <label>Paso <input type="number" id="o-kstep" value="5" min="1"></label>
+        <label>Fijar K (0 = automático) <input type="number" id="o-k" value="0" min="0"></label>
+        <label>Temas BERTopic
+          <select id="o-bnr"><option value="lda">Igual que LDA</option><option value="auto">Automático (HDBSCAN)</option></select></label>
+        <label>Tamaño mínimo de grupo (0 = auto) <input type="number" id="o-mcs" value="0" min="0"></label>
+        <label>Réplicas de estabilidad LDA <input type="number" id="o-slda" value="3" min="1" max="10"></label>
+        <label>Réplicas de estabilidad BERTopic <input type="number" id="o-sbert" value="2" min="1" max="6"></label>
+        <label>Amplitud de periodos (años) <input type="number" id="o-pw" value="5" min="2"></label>
+        <label>Frecuencia documental mínima <input type="number" id="o-mindf" value="5" min="1"></label>
+        <label>Umbral de convergencia (coseno) <input type="number" id="o-tau" value="0.5" step="0.05"></label>
+        <label>Semilla aleatoria <input type="number" id="o-seed" value="42"></label>
+      </div>
+    </details>
+    <button id="b-run" class="primary">Ejecutar análisis</button>
+    <div id="run-status" hidden>
+      <p id="stage" class="stage"></p>
+      <div class="bar"><div id="bar"></div></div>
+      <p id="pmsg" class="pmsg"></p>
+    </div>
+  </section>
+
+  <!-- 3. RESULTADOS -->
+  <section class="card" id="s-results" hidden>
+    <h2><span class="n">3</span> Resultados</h2>
+    <div id="tables"></div>
+    <div id="labels-box" hidden>
+      <h3>Nombre de los temas (en inglés)</h3>
+      <p class="hint">Asigne un nombre interpretativo a cada tema; se usará en figuras, tablas y texto.</p>
+      <div id="labels" class="labels"></div>
+      <button id="b-labels">Aplicar nombres</button>
+    </div>
+    <h3>Figuras</h3>
+    <div id="gallery" class="gallery"></div>
+  </section>
+
+  <!-- 4. REDACCIÓN -->
+  <section class="card" id="s-write" hidden>
+    <h2><span class="n">4</span> Redacción del documento</h2>
+    <div class="grid">
+      <label class="wide">Tema del estudio (en inglés) <input type="text" id="m-topic" placeholder="p. ej.: Coffea arabica"></label>
+      <label class="wide">Título del artículo (opcional, en inglés) <input type="text" id="m-title"></label>
+      <label class="wide">Ecuación de búsqueda <textarea id="m-query" rows="2"></textarea></label>
+      <label>Fecha de la búsqueda <input type="text" id="m-date"></label>
+    </div>
+    <p><strong>Apartados a redactar</strong> <span class="hint">(texto en español; título, figuras y tablas en inglés)</span></p>
+    <div id="sections" class="checks"></div>
+    <div class="row">
+      <button id="b-doc" class="primary">Generar documento Word</button>
+      <button id="b-zip">Descargar figuras y tablas (.zip)</button>
+    </div>
+  </section>
+
+  <div id="toast" hidden></div>
+</main>
+<footer class="wrap">BiblioTopic · código abierto en
+  <a href="https://github.com/CarlosSalasMacias/BiblioTopic">GitHub</a></footer>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
