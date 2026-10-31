@@ -40,7 +40,11 @@
     </div>
     <p class="hint">WoS: <em>Export → Tab delimited file</em>, contenido <em>Full Record and Cited References</em>.
       Scopus: <em>Export → CSV</em> con todos los campos.</p>
-    <button id="b-load" class="primary" disabled>Cargar y fusionar</button>
+    <div class="row">
+      <button id="b-load" class="primary" disabled>Cargar y fusionar</button>
+      <label class="btnlike">Abrir proyecto guardado
+        <input type="file" id="f-project" accept=".bibliotopic" hidden disabled></label>
+    </div>
     <div id="summary" hidden></div>
   </section>
 
@@ -74,6 +78,9 @@
         <label>Frecuencia documental mínima <input type="number" id="o-mindf" value="5" min="1"></label>
         <label>Umbral de convergencia (coseno) <input type="number" id="o-tau" value="0.5" step="0.05"></label>
         <label>Semilla aleatoria <input type="number" id="o-seed" value="42"></label>
+        <label>Remuestreos bootstrap <input type="number" id="o-boot" value="200" min="50" max="2000" step="50"></label>
+        <label>Forma de los conglomerados (HJ-Biplot)
+          <select id="o-shape"><option value="hull">Envolvente convexa</option><option value="ellipse">Elipse</option></select></label>
       </div>
     </details>
     <button id="b-run" class="primary">Ejecutar análisis</button>
@@ -92,7 +99,21 @@
       <h3>Nombre de los temas (en inglés)</h3>
       <p class="hint">Asigne un nombre interpretativo a cada tema; se usará en figuras, tablas y texto.</p>
       <div id="labels" class="labels"></div>
-      <button id="b-labels">Aplicar nombres</button>
+      <div class="row">
+        <button id="b-labels">Aplicar nombres</button>
+        <button id="b-ai-labels" class="ai">Sugerir nombres con IA</button>
+      </div>
+    </div>
+    <div id="validation-box">
+      <h3>Validación por expertos</h3>
+      <p class="hint">Descargue la hoja, envíela a 2–3 especialistas (cada uno completa su copia: calificación de
+        cada tema y prueba de la palabra intrusa; el modelo de origen está oculto) y cargue aquí las hojas completadas.</p>
+      <div class="row">
+        <button id="b-val-sheet">Descargar hoja para evaluadores (.xlsx)</button>
+        <label class="btnlike">Cargar hojas completadas
+          <input type="file" id="f-val" accept=".xlsx" multiple hidden></label>
+      </div>
+      <div id="val-result"></div>
     </div>
     <h3>Figuras</h3>
     <div id="gallery" class="gallery"></div>
@@ -109,10 +130,30 @@
     </div>
     <p><strong>Apartados a redactar</strong> <span class="hint">(texto en español; título, figuras y tablas en inglés)</span></p>
     <div id="sections" class="checks"></div>
+    <p><strong>Formato de figuras</strong></p>
+    <div class="checks">
+      <label><input type="checkbox" id="m-comp" checked> Figuras compuestas con paneles (a), (b)…</label>
+      <label><input type="checkbox" id="m-tiff" checked> TIFF 600 dpi a doble columna (175 mm), además de PNG y PDF</label>
+    </div>
+    <details id="ai-box">
+      <summary>Asistencia con IA (opcional)</summary>
+      <p class="hint">Usa Claude (Anthropic) con su propia clave de API para proponer nombres de temas y redactar un
+        borrador de la Discusión que solo cita documentos del corpus. Se envían los términos, títulos y resultados
+        resumidos (no los archivos completos). La clave solo se usa en esta pestaña y no se guarda.</p>
+      <div class="grid">
+        <label class="wide">Clave de API de Anthropic <input type="password" id="ai-key" autocomplete="off" placeholder="sk-ant-…"></label>
+      </div>
+      <div class="row">
+        <button id="b-ai-disc" class="ai">Redactar borrador de la Discusión</button>
+      </div>
+      <div id="ai-out" class="ai-out" hidden></div>
+    </details>
     <div class="row">
       <button id="b-doc" class="primary">Generar documento Word</button>
       <button id="b-zip">Descargar figuras y tablas (.zip)</button>
+      <button id="b-save">Guardar proyecto</button>
     </div>
+    <p class="hint">El Word y el .zip generan las figuras finales (TIFF 600 dpi y compuestas); puede tardar 1–3 minutos.</p>
   </section>
 
   <div id="toast" hidden></div>

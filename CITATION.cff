@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use BiblioTopic, please cite it as below."
+title: "BiblioTopic: browser-based bibliometrics and comparative topic modelling (LDA and BERTopic) for Web of Science and Scopus corpora"
+type: software
+authors:
+  - family-names: "Salas-Macías"
+    given-names: "Carlos Alfredo"
+    affiliation: "Universidad Técnica de Manabí, Ecuador"
+    # orcid: "https://orcid.org/0000-0000-0000-0000"
+version: "1.0.0"
+date-released: "2026-11-01"
+license: MIT
+repository-code: "https://github.com/CarlosSalasMacias/BiblioTopic"
+url: "https://carlossalasmacias.github.io/BiblioTopic/"
+keywords:
+  - bibliometrics
+  - topic modelling
+  - LDA
+  - BERTopic
+  - HJ-Biplot
+  - science mapping
+  - Web of Science
+  - Scopus

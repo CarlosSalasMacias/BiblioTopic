@@ -1,9 +1,11 @@
 // BiblioTopic — interfaz (hilo principal). El trabajo pesado ocurre en js/worker.js.
 const $ = (id) => document.getElementById(id);
 const worker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
-const state = { analyses: {}, sections: {}, summary: null, labels: null, busy: false };
+const state = { analyses: {}, sections: {}, summary: null, labels: null, busy: false, aiLabels: false, aiModel: "" };
 
-const DEPENDS = { compare: ["lda", "bertopic"], strategic: ["lda"], hjbiplot: [], temporal: [] };
+const DEPENDS = { compare: ["lda", "bertopic"], inference: ["compare", "lda", "bertopic"], strategic: ["lda"],
+  hjbiplot: [], temporal: [] };
+const DEFAULT_OFF_SECTIONS = ["discussion"];
 const FIG_TITLES = {
   prisma: "Diagrama de flujo", annual: "Producción anual", sources: "Fuentes", authors: "Autores",
   countries: "Países", collab_map: "Mapa de colaboración", collab: "Red de colaboración entre países", kw: "Palabras clave",
@@ -11,12 +13,14 @@ const FIG_TITLES = {
   hj_lda: "HJ-Biplot LDA", bert_words: "Temas BERTopic", bert_map: "Mapa de documentos",
   bert_time: "BERTopic por periodo", hj_bert: "HJ-Biplot BERTopic", sim: "Similitud LDA–BERTopic",
   cont: "Coincidencia por documento", trends: "Temas emergentes y en declive",
-  hj_country: "HJ-Biplot países", strategic: "Mapa estratégico",
+  hj_country: "HJ-Biplot países", strategic: "Mapa estratégico", callon: "Mapa temático (Callon)",
+  sankey: "Evolución temática (Sankey)", cocit: "Red de co-citación",
 };
 const TABLE_TITLES = {
   T1_main_information: "Información principal", T8_model_metrics: "Comparación de modelos",
   doc_agreement: "Coincidencia por documento", T9_topic_alignment: "Emparejamiento de temas",
-  T4_countries: "Países", T2_top_sources: "Fuentes principales",
+  T4_countries: "Países", T2_top_sources: "Fuentes principales", T8b_inference: "Inferencia estadística (IC 95 %)",
+  T10_most_cited: "Documentos más citados", T11_thematic_map: "Mapa temático", T12_expert_validation: "Validación por expertos",
 };
 
 function toast(msg, ms = 5000) {
@@ -32,7 +36,8 @@ const csv = (s) => s.split(",").map((x) => x.trim()).filter(Boolean);
 
 function busy(on) {
   state.busy = on;
-  for (const id of ["b-load", "b-run", "b-labels", "b-doc", "b-zip"]) $(id).disabled = on;
+  for (const id of ["b-load", "b-run", "b-labels", "b-doc", "b-zip", "b-save", "b-val-sheet", "b-ai-labels",
+    "b-ai-disc"]) $(id).disabled = on;
 }
 
 // ------------------------------------------------------------------ archivos
@@ -132,6 +137,8 @@ $("b-run").onclick = () => {
     bert_nr_topics: $("o-bnr").value === "lda" ? "lda" : null,
     min_cluster_size: num("o-mcs") || null, n_stab_lda: num("o-slda"), n_stab_bert: num("o-sbert"),
     period_width: num("o-pw"), min_df: num("o-mindf"), tau_strong: num("o-tau"), seed: num("o-seed"),
+    n_boot: num("o-boot"), cluster_shape: $("o-shape").value, composite: $("m-comp").checked,
+    export_tiff: $("m-tiff").checked,
   };
   if (cfg.k_min >= cfg.k_max && !cfg.k) return toast("K mínimo debe ser menor que K máximo.");
   busy(true);
@@ -184,7 +191,91 @@ $("b-labels").onclick = () => {
   });
   busy(true);
   toast("Actualizando figuras con los nuevos nombres…");
-  worker.postMessage({ cmd: "labels", labels });
+  worker.postMessage({ cmd: "labels", labels, aiUsed: state.aiLabels });
+};
+
+// ------------------------------------------------------------------ proyecto y validación
+$("f-project").addEventListener("change", async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  busy(true);
+  const data = new Uint8Array(await f.arrayBuffer());
+  worker.postMessage({ cmd: "open_project", data }, [data.buffer]);
+  e.target.value = "";
+});
+$("b-save").onclick = () => { busy(true); worker.postMessage({ cmd: "save_project" }); };
+$("b-val-sheet").onclick = () => { busy(true); worker.postMessage({ cmd: "val_sheet" }); };
+$("f-val").addEventListener("change", async (e) => {
+  const fs = [...e.target.files];
+  if (!fs.length) return;
+  busy(true);
+  const payload = await Promise.all(fs.map(async (f) => ({ name: f.name, data: new Uint8Array(await f.arrayBuffer()) })));
+  worker.postMessage({ cmd: "val_load", files: payload }, payload.map((p) => p.data.buffer));
+  e.target.value = "";
+});
+
+// ------------------------------------------------------------------ IA (opcional)
+let ctxResolve = null;
+const getContext = () => new Promise((res) => { ctxResolve = res; worker.postMessage({ cmd: "ai_context" }); });
+function needKey() {
+  const k = $("ai-key").value.trim();
+  if (!k) {
+    $("ai-box").open = true;
+    $("ai-key").focus();
+    toast("Escriba su clave de API de Anthropic en «Asistencia con IA» (sección 4).");
+  }
+  return k;
+}
+$("b-ai-labels").onclick = async () => {
+  const key = needKey();
+  if (!key) return;
+  busy(true);
+  toast("Pidiendo propuestas de nombres a Claude…", 15000);
+  try {
+    const ai = await import("./ai.js");
+    const ctx = await getContext();
+    const out = await ai.suggestLabels(key, ctx, $("m-topic").value.trim());
+    const byId = Object.fromEntries(out.map((t) => [t.id, t]));
+    $("labels").querySelectorAll(".lrow").forEach((row) => {
+      const id = row.querySelector("b").textContent;
+      if (byId[id]) {
+        row.querySelector("input").value = byId[id].label;
+        row.querySelector("input").title = byId[id].rationale;
+      }
+    });
+    state.aiLabels = true;
+    toast("Nombres propuestos. Revíselos y pulse «Aplicar nombres».", 9000);
+  } catch (err) {
+    toast("IA: " + (err.message || err), 12000);
+  } finally {
+    busy(false);
+  }
+};
+$("b-ai-disc").onclick = async () => {
+  const key = needKey();
+  if (!key) return;
+  busy(true);
+  const out = $("ai-out");
+  out.hidden = false;
+  out.textContent = "Redactando la Discusión (puede tardar 1–3 minutos)…";
+  try {
+    const ai = await import("./ai.js");
+    const ctx = await getContext();
+    const meta = { topic_name: $("m-topic").value.trim() };
+    const text = await ai.draftDiscussion(key, ctx, meta, (snap) => { out.textContent = snap; });
+    out.textContent = text;
+    worker.postMessage({ cmd: "ai_set", texts: { discussion: text } });
+    const cb = $("sections").querySelector('input[value="discussion"]');
+    if (cb) cb.checked = true;
+    state.aiModel = ai.MODEL;
+    toast("Discusión redactada. Se incluirá en el documento Word.", 8000);
+  } catch (err) {
+    out.textContent = "";
+    out.hidden = true;
+    toast("IA: " + (err.message || err), 12000);
+  } finally {
+    busy(false);
+  }
 };
 
 // ------------------------------------------------------------------ redacción
@@ -197,10 +288,13 @@ $("b-doc").onclick = () => {
   worker.postMessage({
     cmd: "report", sections,
     meta: { topic_name: $("m-topic").value.trim(), title: $("m-title").value.trim(),
-            query: $("m-query").value.trim(), search_date: $("m-date").value.trim() },
+            query: $("m-query").value.trim(), search_date: $("m-date").value.trim(),
+            composite: $("m-comp").checked, ai_model: state.aiModel ? "Claude Opus 5.5" : "" },
+    opts: figOpts(),
   });
 };
-$("b-zip").onclick = () => { busy(true); worker.postMessage({ cmd: "zip" }); };
+const figOpts = () => ({ composite: $("m-comp").checked, export_tiff: $("m-tiff").checked });
+$("b-zip").onclick = () => { busy(true); worker.postMessage({ cmd: "zip", opts: figOpts() }); };
 
 function download(name, data, mime) {
   const url = URL.createObjectURL(new Blob([data], { type: mime }));
@@ -229,9 +323,10 @@ worker.onmessage = ({ data: m }) => {
       state.analyses = m.analyses;
       state.sections = m.sections;
       buildChecks("analyses", m.analyses, Object.keys(m.analyses));
-      buildChecks("sections", m.sections, Object.keys(m.sections));
+      buildChecks("sections", m.sections, Object.keys(m.sections).filter((k) => !DEFAULT_OFF_SECTIONS.includes(k)));
       $("f-scopus").disabled = false;
       $("f-wos").disabled = false;
+      $("f-project").disabled = false;
       break;
     case "loaded":
       busy(false);
@@ -261,6 +356,24 @@ worker.onmessage = ({ data: m }) => {
       break;
     case "warn":
       toast(m.msg, 9000);
+      break;
+    case "project":
+      $("s-analyses").hidden = false;
+      $("run-status").hidden = false;
+      toast("Proyecto abierto.");
+      break;
+    case "validation": {
+      const r = m.result;
+      const al = Object.entries(r.alpha).map(([k, v]) => `${k}: ${v ?? "n.d."}`).join(" · ");
+      $("val-result").innerHTML = `<p class="hint">${r.raters.length} evaluadores (${r.raters.join(", ")}). Alfa de Krippendorff — ${al}</p>`;
+      toast("Validación cargada; se incluirá en el documento.");
+      break;
+    }
+    case "ai_context":
+      if (ctxResolve) ctxResolve(m.ctx);
+      ctxResolve = null;
+      break;
+    case "ai_saved":
       break;
     case "error":
       busy(false);

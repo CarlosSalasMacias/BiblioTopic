@@ -41,6 +41,14 @@ REFS = {
     "vaneck": "van Eck, N. J., & Waltman, L. (2009). How to normalize cooccurrence data? An analysis of some well-known similarity measures. Journal of the American Society for Information Science and Technology, 60(8), 1635–1651. https://doi.org/10.1002/asi.21075",
     "ward": "Ward, J. H. (1963). Hierarchical grouping to optimize an objective function. Journal of the American Statistical Association, 58(301), 236–244. https://doi.org/10.1080/01621459.1963.10500845",
     "rousseeuw": "Rousseeuw, P. J. (1987). Silhouettes: A graphical aid to the interpretation and validation of cluster analysis. Journal of Computational and Applied Mathematics, 20, 53–65. https://doi.org/10.1016/0377-0427(87)90125-7",
+    "efron": "Efron, B., & Tibshirani, R. J. (1993). An introduction to the bootstrap. Chapman & Hall/CRC.",
+    "mann": "Mann, H. B., & Whitney, D. R. (1947). On a test of whether one of two random variables is stochastically larger than the other. The Annals of Mathematical Statistics, 18(1), 50–60.",
+    "chang": "Chang, J., Boyd-Graber, J., Gerrish, S., Wang, C., & Blei, D. M. (2009). Reading tea leaves: How humans interpret topic models. Advances in Neural Information Processing Systems, 22, 288–296.",
+    "hayes": "Hayes, A. F., & Krippendorff, K. (2007). Answering the call for a standard reliability measure for coding data. Communication Methods and Measures, 1(1), 77–89. https://doi.org/10.1080/19312450709336664",
+    "callon": "Callon, M., Courtial, J. P., & Laville, F. (1991). Co-word analysis as a tool for describing the network of interactions between basic and technological research: The case of polymer chemistry. Scientometrics, 22(1), 155–205.",
+    "cobo": "Cobo, M. J., López-Herrera, A. G., Herrera-Viedma, E., & Herrera, F. (2011). An approach for detecting, quantifying, and visualizing the evolution of a research field: A practical application to the Fuzzy Sets Theory field. Journal of Informetrics, 5(1), 146–166. https://doi.org/10.1016/j.joi.2010.10.002",
+    "small": "Small, H. (1973). Co-citation in the scientific literature: A new measure of the relationship between two documents. Journal of the American Society for Information Science, 24(4), 265–269.",
+    "montazeri": "Montazeri, A., Mohammadi, S., Hesari, P. M., Ghaemi, M., Riazi, H., & Sheikhi-Mobarakeh, Z. (2023). Preliminary guideline for reporting bibliometric reviews of the biomedical literature (BIBLIO): A minimum requirements. Systematic Reviews, 12, 239. https://doi.org/10.1186/s13643-023-02410-2",
     "strehl": "Strehl, A., & Ghosh, J. (2002). Cluster ensembles: A knowledge reuse framework for combining multiple partitions. Journal of Machine Learning Research, 3, 583–617.",
 }
 
@@ -118,6 +126,26 @@ class Writer:
             self.tab_n += 1
             self.tab_no[k] = self.tab_n
 
+    def reserve_figs(self, keys, composites):
+        """Numera figuras; las que forman parte de una compuesta comparten número con letra (3a, 3b)."""
+        panel_of = {k: name for name, ks in composites.items() for k in ks}
+        self.fig_entries, done = [], set()
+        for k in keys:
+            name = panel_of.get(k)
+            if name:
+                if name in done:
+                    continue
+                done.add(name)
+                self.fig_n += 1
+                for i, pk in enumerate(composites[name]):
+                    self.fig_no[pk] = f"{self.fig_n}{chr(97 + i)}"
+                self.fig_no[name] = str(self.fig_n)
+                self.fig_entries.append(name)
+            else:
+                self.fig_n += 1
+                self.fig_no[k] = str(self.fig_n)
+                self.fig_entries.append(k)
+
     def F(self, k):
         return f"Figura {self.fig_no[k]}"
 
@@ -191,6 +219,8 @@ SECTIONS = {
     "tables": "Tablas (en inglés)",
     "figures": "Figuras (en inglés)",
     "references": "Referencias de los métodos",
+    "discussion": "Discusión (borrador con IA; requiere clave de API)",
+    "checklist": "Lista de verificación de reporte y declaración de disponibilidad",
 }
 
 CITE_NAMES = {
@@ -206,6 +236,9 @@ CITE_NAMES = {
     "page": "Page et al., 2021", "pedregosa": "Pedregosa et al., 2011",
     "reimers": "Reimers y Gurevych, 2019", "strehl": "Strehl y Ghosh, 2002",
     "vaneck": "van Eck y Waltman, 2009", "ward": "Ward, 1963", "rousseeuw": "Rousseeuw, 1987",
+    "efron": "Efron y Tibshirani, 1993", "mann": "Mann y Whitney, 1947", "chang": "Chang et al., 2009",
+    "hayes": "Hayes y Krippendorff, 2007", "callon": "Callon et al., 1991", "cobo": "Cobo et al., 2011",
+    "small": "Small, 1973", "montazeri": "Montazeri et al., 2023",
 }
 
 FIG_CAPTIONS = {
@@ -230,6 +263,9 @@ FIG_CAPTIONS = {
     "trends": "Linear trend of the annual prevalence of each topic. Red: hot (p < 0.05, positive slope); blue: cold (p < 0.05, negative slope).",
     "hj_country": "HJ-Biplot of the most productive countries (points, coloured by country cluster) and LDA topics (vectors, coloured by topic cluster).",
     "strategic": "Strategic map of LDA topics: growth (slope) versus impact (citations per year); bubble size: prevalence.",
+    "callon": "Thematic map of keyword clusters (Callon centrality and density, rank-scaled); bubble size: occurrences.",
+    "sankey": "Thematic evolution of keyword clusters across periods; flow width proportional to the inclusion index.",
+    "cocit": "Co-citation network of the most cited references. Node size: local citations; colours: Louvain communities.",
 }
 FIG_ORDER = list(FIG_CAPTIONS)
 
@@ -245,8 +281,18 @@ TAB_CAPTIONS = {
     "T8_model_metrics": ("Comparison of model quality metrics.", None),
     "T9_topic_alignment": ("Alignment between LDA and BERTopic topics (Hungarian matching).",
                            "TRI: Topic Robustness Index = cosine × √(stability_LDA × stability_BERTopic)."),
+    "T8b_inference": ("Statistical comparison of LDA and BERTopic (95% confidence intervals).",
+                      "Coherence and agreement: percentile bootstrap over documents; stability: t-based CI over "
+                      "topics; tests: two-sided Mann-Whitney U on per-topic values (r = |Z|/√N)."),
+    "T10_most_cited": ("Most cited documents in the corpus.", None),
+    "T11_thematic_map": ("Thematic clusters of author keywords (Callon centrality and density).", None),
+    "T12_expert_validation": ("Expert validation of the topics (mean and 95% CI across topics).",
+                              "Word-intrusion precision: proportion of raters identifying the intruder word."),
+    "T13_cocited_references": ("Most cited references (local citations).", None),
 }
-TAB_ORDER = list(TAB_CAPTIONS)
+TAB_ORDER = ["T1_main_information", "T2_top_sources", "T4_countries", "T10_most_cited", "T13_cocited_references",
+             "T11_thematic_map", "T6_LDA_topics", "T7_BERTopic_topics", "T8_model_metrics", "T8b_inference",
+             "T9_topic_alignment", "T12_expert_validation"]
 
 
 def build(R, path, meta, sections=None):
@@ -266,7 +312,9 @@ def build(R, path, meta, sections=None):
     W.note("Borrador generado automáticamente a partir de los datos. Los textos resaltados en amarillo "
            "requieren revisión de los autores expertos en la temática (en particular, las etiquetas "
            "de los temas). Título, figuras y tablas en inglés; texto en español.")
-    W.reserve([k for k in FIG_ORDER if k in FIG], [k for k in TAB_ORDER if k in T])
+    comps = X.get("composites", {}) if meta.get("composite", True) else {}
+    W.reserve([], [k for k in TAB_ORDER if k in T])
+    W.reserve_figs([k for k in FIG_ORDER if k in FIG], comps)
     used = set()
 
     def cite(*keys):
@@ -455,6 +503,57 @@ def build(R, path, meta, sections=None):
                 + (" Finalmente, se evaluó la concordancia en la clasificación temporal (emergente, estable o en "
                    "declive) de los temas emparejados." if R.on("temporal") else ""))
 
+        if "T8b_inference" in T:
+            W.h(f"2.{next(s)}. Inferencia estadística", 2)
+            W.p("Para cuantificar la incertidumbre de la comparación se calcularon intervalos de confianza del "
+                f"95 % mediante bootstrap percentil {cite('efron')} con {cfg['n_boot']} remuestreos de documentos "
+                "para la coherencia NPMI media de cada modelo, su diferencia y los índices ARI y NMI; para la "
+                "estabilidad media se usaron intervalos basados en la distribución t sobre los temas. Las "
+                "diferencias entre modelos en los valores por tema se contrastaron con la prueba U de "
+                f"Mann-Whitney bilateral {cite('mann')}, informando el tamaño del efecto r = |Z|/√N."
+                + (" Para el TRI medio de los pares emparejados se obtuvo también un intervalo bootstrap."
+                   if X.get("tri_ci") else ""))
+        if "T10_most_cited" in T or "cocit" in FIG:
+            W.h(f"2.{next(s)}. Análisis de citas", 2)
+            W.p("Se identificaron los documentos más citados del corpus (citas totales y citas por año) y los más "
+                "citados dentro de cada tema"
+                + (". Además, a partir de las referencias citadas se construyó una red de co-citación "
+                   f"{cite('small')} con las 40 referencias más citadas localmente; las referencias se "
+                   "normalizaron como primer autor y año." if "cocit" in FIG else "."))
+        if "callon" in FIG or "sankey" in FIG:
+            W.h(f"2.{next(s)}. Mapa temático y evolución temática", 2)
+            W.p("Las palabras clave de autor se agruparon mediante el algoritmo de Louvain sobre la red de "
+                f"co-ocurrencia ponderada por el índice de equivalencia {cite('callon')}. Para cada grupo se "
+                "calcularon la centralidad (intensidad de sus vínculos con otros grupos) y la densidad (intensidad "
+                "de sus vínculos internos), y se representaron en un mapa temático de cuatro cuadrantes: temas "
+                "motores, nicho, emergentes o en declive, y básicos."
+                + (" La evolución temática se analizó dividiendo el periodo en subperiodos, agrupando las palabras "
+                   "clave de cada uno y enlazando los grupos de subperiodos consecutivos mediante el índice de "
+                   f"inclusión {cite('cobo')}, representado en un diagrama de Sankey." if "sankey" in FIG else ""))
+        if R.validation is not None:
+            V = R.validation
+            W.h(f"2.{next(s)}. Validación de los temas por expertos", 2)
+            W.p(f"La interpretabilidad de los temas se validó con {pl(V['n_raters'], 'evaluador experto', 'evaluadores expertos')} "
+                "mediante una hoja de evaluación generada por la aplicación, en la que los temas de ambos modelos "
+                "se presentaron en orden aleatorio y sin indicar el modelo de origen. Cada evaluador calificó la "
+                "interpretabilidad y la coherencia de cada tema en una escala de 1 a 5 a partir de sus diez "
+                "términos principales y tres documentos representativos, y realizó la prueba de la palabra "
+                f"intrusa {cite('chang')}, en la que debía identificar el término ajeno entre cinco términos "
+                "principales del tema y uno de otro tema. El acuerdo entre evaluadores se estimó con el alfa de "
+                f"Krippendorff {cite('hayes')} (nivel de intervalo para las calificaciones y nominal para la "
+                "palabra intrusa).")
+        if R.ai.get("discussion") or R.ai.get("labels_used"):
+            W.h(f"2.{next(s)}. Uso de inteligencia artificial", 2)
+            W.p("Se utilizó un modelo de lenguaje (", (meta.get("ai_model") or "Claude", "hl"), ", Anthropic) "
+                "como asistente para "
+                + enum_es([x for x, on in (("proponer nombres para los temas a partir de sus términos y "
+                                            "documentos representativos", R.ai.get("labels_used")),
+                                           ("redactar un primer borrador de la discusión", R.ai.get("discussion")))
+                           if on])
+                + ". Todas las propuestas fueron revisadas, corregidas y aprobadas por los autores, que asumen "
+                "la responsabilidad del contenido. Las citas del borrador se restringieron a documentos del "
+                "propio corpus.")
+
         W.h(f"2.{next(s)}. Reproducibilidad", 2)
         v = R.versions
         W.p("Todos los análisis se realizaron con la aplicación web BiblioTopic, que ejecuta Python "
@@ -462,7 +561,8 @@ def build(R, path, meta, sections=None):
             f"{v.get('scikit-learn')}, SciPy {v.get('scipy')}, networkx {v.get('networkx')} y matplotlib "
             f"{v.get('matplotlib')}. Se fijó la semilla aleatoria {cfg['seed']}. La configuración completa, las "
             "tablas intermedias y la asignación de temas por documento se proporcionan como material "
-            "suplementario.")
+            "suplementario. El código de BiblioTopic está disponible en ",
+            ("https://github.com/CarlosSalasMacias/BiblioTopic (DOI de Zenodo: [completar])", "hl"), ".")
 
     # ============================================================== RESULTADOS
     if "results" in sections:
@@ -645,6 +745,29 @@ def build(R, path, meta, sections=None):
                 f"{f(ag['NMI (non-outliers)'], 3)})."
                 + (f" En los temas emparejados, ambos modelos coincidieron en la clasificación temporal en el "
                    f"{f(100 * tag, 1)} % de los casos." if R.on("temporal") and not np.isnan(tag) else ""))
+            inf = X.get("inference")
+            if inf:
+                ch, d = inf["coh"], inf["coh"]["difference"]
+                sig = "estadísticamente significativa" if d["p"] < 0.05 else "no significativa"
+                txt = (f"Los intervalos de confianza{ref('T8b_inference')} confirmaron estas diferencias: la "
+                       f"coherencia NPMI media fue {f(ch['LDA']['mean'], 3)} (IC 95 %: {f(ch['LDA']['lo'], 3)} a "
+                       f"{f(ch['LDA']['hi'], 3)}) en LDA y {f(ch['BERTopic']['mean'], 3)} ({f(ch['BERTopic']['lo'], 3)} "
+                       f"a {f(ch['BERTopic']['hi'], 3)}) en BERTopic; la diferencia ({f(d['mean'], 3)}; IC 95 %: "
+                       f"{f(d['lo'], 3)} a {f(d['hi'], 3)}; p = {f(d['p'], 3)}) fue {sig}. ")
+                tc = inf["t_coh"]
+                if not np.isnan(tc["p"]):
+                    txt += (f"La comparación de la coherencia por tema con la prueba U de Mann-Whitney dio "
+                            f"U = {f(tc['U'], 1)}, p = {f(tc['p'], 3)} (r = {f(tc['r'], 2)}). ")
+                ts = inf["t_stab"]
+                if stab_on and not np.isnan(ts["p"]):
+                    txt += (f"La estabilidad media fue {f(inf['stab_lda'][0], 3)} (IC 95 %: {f(inf['stab_lda'][1], 3)} "
+                            f"a {f(inf['stab_lda'][2], 3)}) en LDA y {f(inf['stab_bert'][0], 3)} "
+                            f"({f(inf['stab_bert'][1], 3)} a {f(inf['stab_bert'][2], 3)}) en BERTopic (U = "
+                            f"{f(ts['U'], 1)}, p = {f(ts['p'], 3)}). ")
+                if X.get("tri_ci"):
+                    m_, lo_, hi_ = X["tri_ci"]
+                    txt += f"El TRI medio de los pares emparejados fue {f(m_, 3)} (IC 95 %: {f(lo_, 3)} a {f(hi_, 3)})."
+                W.p(txt)
 
         if "hj_country" in FIG:
             hjc = X["hj_country"]
@@ -659,6 +782,85 @@ def build(R, path, meta, sections=None):
             W.p(f"El mapa estratégico{ref('strategic')} cruza el crecimiento y el impacto (citas por año) de "
                 "cada tema de LDA: los temas del cuadrante superior derecho combinan crecimiento e impacto "
                 "elevados y representan frentes de investigación consolidados en expansión.")
+
+        if "T10_most_cited" in T:
+            W.h(f"3.{next(sec)}. Documentos más citados", 2)
+            mc = T["T10_most_cited"]
+            W.p(f"Los documentos más citados{ref('T10_most_cited')} fueron "
+                + enum_es([f"{r['Document']}, «{r['Title']}» ({r['Citations']} citas)" for _, r in mc.head(3).iterrows()])
+                + "."
+                + (" Dentro de los temas de LDA, los trabajos más influyentes fueron: " + "; ".join(
+                    f"{g}: {', '.join(d['Document'].head(2))}" for g, d in X["cited_lda"].groupby("Topic", sort=False))
+                   + "." if X.get("cited_lda") is not None and len(X["cited_lda"]) else ""))
+            if "cocit" in FIG:
+                cc = X.get("cocit_clusters", [])
+                W.p(f"La red de co-citación{ref('T13_cocited_references', 'cocit')} se organizó en "
+                    f"{pl(len(cc), 'comunidad', 'comunidades')}, encabezadas por "
+                    + enum_es([", ".join(c[:2]) for c in cc[:4]]) + ".")
+        if "callon" in FIG or "sankey" in FIG:
+            W.h(f"3.{next(sec)}. Mapa temático y evolución temática", 2)
+            if "T11_thematic_map" in T:
+                tm = T["T11_thematic_map"]
+                byq = {q: tm[tm["Quadrant"] == q]["Label"].tolist() for q in tm["Quadrant"].unique()}
+                names = {"Motor themes": "temas motores", "Niche themes": "temas nicho",
+                         "Emerging or declining themes": "temas emergentes o en declive", "Basic themes": "temas básicos"}
+                W.p(f"El mapa temático{ref('callon', 'T11_thematic_map')} identificó "
+                    f"{pl(len(tm), 'grupo temático', 'grupos temáticos')}. "
+                    + " ".join(f"Como {names[q]} se ubicaron «" + "»; «".join(v) + "»." for q, v in byq.items() if v)
+                    + " ", ("[Interpretar el significado de cada cuadrante para el campo de estudio.]", "hl"))
+            if "sankey" in FIG and X.get("evolution"):
+                layers, links = X["evolution"]
+                strong = sorted(links, key=lambda l: -l["inclusion"])[:3]
+                W.p(f"La evolución temática{ref('sankey')} mostró la continuidad y transformación de los grupos de "
+                    f"palabras clave entre {layers[0][0]['period']} y {layers[-1][0]['period']}. Los vínculos más fuertes "
+                    "fueron " + enum_es([f"«{layers[l['t']][l['i']]['top']}» → «{layers[l['t'] + 1][l['j']]['top']}» "
+                                         f"(inclusión = {f(l['inclusion'], 2)})" for l in strong]) + ".")
+        if R.validation is not None and "T12_expert_validation" in T:
+            V = R.validation
+            W.h(f"3.{next(sec)}. Validación por expertos", 2)
+            al = V["alpha"]
+            tv = V["table"].set_index("Model")
+            txt = (f"Participaron {pl(V['n_raters'], 'evaluador', 'evaluadores')}{ref('T12_expert_validation')}. "
+                   + "; ".join(f"{'E' if i == 0 else 'e'}n {m}, la interpretabilidad media fue {tv.loc[m, 'Interpretability (1-5)']}, la "
+                               f"coherencia {tv.loc[m, 'Coherence (1-5)']} y la precisión en la prueba de la palabra "
+                               f"intrusa {tv.loc[m, 'Word-intrusion precision']}" for i, m in enumerate(tv.index)) + ". ")
+            if V["tests"]:
+                t_ = V["tests"].get("interpretability", {})
+                if t_ and not np.isnan(t_.get("p", np.nan)):
+                    txt += (f"La diferencia en interpretabilidad entre modelos fue U = {f(t_['U'], 1)}, "
+                            f"p = {f(t_['p'], 3)}. ")
+            txt += ("El acuerdo entre evaluadores (alfa de Krippendorff) fue "
+                    + enum_es([f"{f(al[k], 2)} para {n}" for k, n in (("interpretability", "la interpretabilidad"),
+                                                                       ("coherence", "la coherencia"),
+                                                                       ("intrusion", "la palabra intrusa"))
+                               if al.get(k) is not None and not np.isnan(al[k])]) + ".")
+            W.p(txt)
+
+    # ============================================================== DISCUSIÓN (IA)
+    corpus_refs = []
+    if "discussion" in sections and R.ai.get("discussion"):
+        import re as _re
+        W.h("4. Discusión", 1)
+        W.note("[Borrador generado con asistencia de IA a partir de los resultados. Debe ser revisado, "
+               "contrastado con la literatura y reescrito por los autores. Solo cita documentos del corpus.]")
+        refmap = {r["id"]: r for r in getattr(R, "ai_refs", [])}
+
+        def sub(m):
+            ids = [x.strip() for x in m.group(1).split(",")]
+            parts = []
+            for i in ids:
+                if i in refmap:
+                    if i not in corpus_refs:
+                        corpus_refs.append(i)
+                    parts.append(refmap[i]["cite"].replace(" (", ", ").rstrip(")"))
+            return "(" + "; ".join(parts) + ")" if parts else ""
+        for para in [x.strip() for x in R.ai["discussion"].split("\n") if x.strip()]:
+            if para.startswith("#"):
+                W.h(para.lstrip("# ").strip(), 2)
+                continue
+            txt = _re.sub(r"\[(R\d+(?:\s*,\s*R\d+)*)\]", sub, para)
+            parts = _re.split(r"(\[cita externa\])", txt)
+            W.p(*[(x, "hl") if x == "[cita externa]" else x for x in parts if x])
 
     # ============================================================== TABLAS / FIGURAS
     if "tables" in sections and W.tab_no:
@@ -676,16 +878,77 @@ def build(R, path, meta, sections=None):
     if "figures" in sections and W.fig_no:
         W.doc.add_page_break()
         W.h("Figures", 1)
-        for k in W.fig_no:
-            cap = FIG_CAPTIONS[k]
+        def cap_of(k):
             if k == "annual" and "MeanTCperYear" in ap:
-                cap = "Annual scientific production and mean citations per year."
+                return "Annual scientific production and mean citations per year."
+            return FIG_CAPTIONS.get(k, "")
+        for k in W.fig_entries:
+            if k in comps:
+                cap = " ".join(f"({chr(97 + i)}) {cap_of(pk)}" for i, pk in enumerate(comps[k]))
+            else:
+                cap = cap_of(k)
             W.figure(k, FIG[k], cap)
+    if "checklist" in sections:
+        used.add("montazeri")
     if "references" in sections and used:
         W.h("Referencias (métodos)", 1)
         for k in sorted(used, key=lambda x: REFS[x]):
             p = W.doc.add_paragraph(REFS[k])
             p.paragraph_format.left_indent = Cm(0.75)
             p.paragraph_format.first_line_indent = Cm(-0.75)
+    if corpus_refs:
+        from .citations import full_ref
+        W.h("Referencias del corpus citadas en la discusión", 1)
+        rows = {r["id"]: r for r in R.ai_refs}
+        for rid in sorted(corpus_refs, key=lambda i: rows[i]["cite"]):
+            p = W.doc.add_paragraph(full_ref(R.df.iloc[rows[rid]["row"]]))
+            p.paragraph_format.left_indent = Cm(0.75)
+            p.paragraph_format.first_line_indent = Cm(-0.75)
+    if "checklist" in sections:
+        _checklist(W, R, meta, FIG, T)
     W.doc.save(path)
     return path
+
+
+def _checklist(W, R, meta, FIG, T):
+    """Lista de verificación basada en los requisitos mínimos de BIBLIO y PRISMA-S + declaración de datos."""
+    W.doc.add_page_break()
+    W.h("Material para el envío", 1)
+    W.note("[Lista orientativa basada en BIBLIO (Montazeri et al., 2023) y PRISMA 2020. Verifique cada ítem "
+           "con la versión oficial de la guía y con las instrucciones de la revista.]")
+    q = bool(meta.get("query"))
+    d = bool(meta.get("search_date"))
+    items = [
+        ("Title identifies the study as a bibliometric / topic-modelling analysis", "Title", True),
+        ("Databases searched and rationale", "2.1", True),
+        ("Full Boolean search strategy and searched fields", "2.1", q),
+        ("Date of the search", "2.1", d),
+        ("Export format and fields retrieved", "2.1", True),
+        ("Deduplication procedure across databases", "2.2", True),
+        ("Eligibility criteria (years, document types, languages)", "2.2", True),
+        ("Flow diagram of records", "Figure 1", "prisma" in FIG),
+        ("Software, versions and random seeds", "Reproducibility", True),
+        ("Definition of bibliometric indicators", "2.3", R.on("biblio")),
+        ("Text preprocessing", "Methods", R.lda is not None or R.bert is not None),
+        ("Topic-model parameters and selection of the number of topics", "Methods", R.lda is not None),
+        ("Validation of topics (coherence, stability, experts)", "Methods / Results",
+         R.validation is not None or R.on("stability")),
+        ("Uncertainty of comparisons (confidence intervals, tests)", "Results", "T8b_inference" in T),
+        ("Use of AI tools disclosed", "Methods", bool(R.ai)),
+        ("Limitations (database coverage, language, document types)", "Discussion", False),
+        ("Data and code availability", "Statement below", True),
+    ]
+    import pandas as pd
+    t = pd.DataFrame([{"Item": i, "Reported in": w, "Status": "Done" if ok else "To complete by authors"}
+                      for i, w, ok in items])
+    W.tab_n += 1
+    W.tab_no["checklist"] = W.tab_n
+    W.table("checklist", t, "Reporting checklist (adapted from BIBLIO and PRISMA 2020).")
+    W.h("Declaración de disponibilidad de datos y código", 2)
+    dbs = " y ".join(R.merge_stats["records_by_db"])
+    W.p(f"Los registros bibliográficos se obtuvieron de {dbs} y están sujetos a las condiciones de licencia de "
+        "dichas bases, por lo que no pueden redistribuirse; la ecuación de búsqueda, los identificadores de los "
+        "documentos (DOI/UT/EID), la asignación de temas por documento, las tablas intermedias y la "
+        "configuración completa del análisis se proporcionan como material suplementario. El código de "
+        "BiblioTopic es de acceso abierto en https://github.com/CarlosSalasMacias/BiblioTopic y está archivado "
+        "en Zenodo (", ("DOI: [completar]", "hl"), ").")

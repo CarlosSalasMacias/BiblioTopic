@@ -80,3 +80,10 @@ th { background: var(--bg); }
          color: var(--bg); padding: 10px 16px; border-radius: 8px; max-width: 90vw; font-size: 14px; }
 footer { color: var(--muted); font-size: 13px; padding: 20px 16px 40px; }
 footer a { color: var(--accent); }
+
+.btnlike { display: inline-block; font: inherit; padding: 9px 16px; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--card); color: var(--text); cursor: pointer; margin-top: 10px; }
+button.ai { border-color: #8C6BB1; color: #8C6BB1; }
+.ai-out { white-space: pre-wrap; background: var(--bg); border-radius: 8px; padding: 12px; font-size: 13px;
+          max-height: 360px; overflow: auto; margin-top: 10px; }
+#validation-box { border-top: 1px solid var(--line); margin-top: 18px; }

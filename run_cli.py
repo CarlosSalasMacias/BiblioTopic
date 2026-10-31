@@ -40,6 +40,6 @@ if S.on("bertopic"):
             for r in range(S.n_umap_runs())]
     xy = UMAP(n_neighbors=15, n_components=2, min_dist=0.1, random_state=seed).fit_transform(emb)
     print(S.run_bertopic([np.asarray(r) for r in reds], xy, name))
-S.render(str(out))
+S.render(str(out), final=True)
 report.build(S, str(out / "Borrador_Metodos_Resultados.docx"), meta, sections)
 print("Listo:", out.resolve())

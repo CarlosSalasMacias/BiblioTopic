@@ -1,0 +1,13 @@
+{
+  "title": "BiblioTopic: browser-based bibliometrics and comparative topic modelling (LDA and BERTopic) for Web of Science and Scopus corpora",
+  "description": "BiblioTopic is an open-source web application that runs entirely in the browser. It merges Web of Science and Scopus exports, computes bibliometric indicators, fits LDA and BERTopic topic models on a shared vocabulary, compares them (coherence, diversity, stability, Hungarian topic alignment, ARI/NMI, Topic Robustness Index, bootstrap confidence intervals), applies HJ-Biplot with cluster analysis, builds thematic maps and thematic evolution diagrams, supports blinded expert validation (ratings and word intrusion, Krippendorff's alpha), and drafts the Methods and Results sections of a manuscript.",
+  "upload_type": "software",
+  "license": "MIT",
+  "creators": [
+    {"name": "Salas-Macías, Carlos Alfredo", "affiliation": "Universidad Técnica de Manabí, Ecuador"}
+  ],
+  "keywords": ["bibliometrics", "topic modelling", "LDA", "BERTopic", "HJ-Biplot", "science mapping", "Web of Science", "Scopus"],
+  "related_identifiers": [
+    {"identifier": "https://github.com/CarlosSalasMacias/BiblioTopic", "relation": "isSupplementTo", "scheme": "url"}
+  ]
+}

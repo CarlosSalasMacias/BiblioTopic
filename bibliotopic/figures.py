@@ -24,14 +24,83 @@ plt.rcParams.update({
 })
 
 
+DOUBLE_COLUMN_IN = 175 / 25.4   # 175 mm: ancho de doble columna
+EXPORT = {"tiff": True, "cluster_shape": "hull"}
+
+
+def configure(tiff=True, cluster_shape="hull"):
+    EXPORT.update(tiff=tiff, cluster_shape=cluster_shape)
+
+
 def _save(fig, path):
-    """PNG a 300 dpi para el Word y PDF vectorial (texto editable) para la revista."""
+    """Escala la figura a doble columna (175 mm) y guarda PNG 300 dpi (Word), PDF vectorial y TIFF 600 dpi."""
+    w, h = fig.get_size_inches()
+    fig.set_size_inches(DOUBLE_COLUMN_IN, h * DOUBLE_COLUMN_IN / w)
     fig.savefig(path, dpi=DPI)
+    base = str(path).rsplit(".", 1)[0]
     try:
-        fig.savefig(str(path).rsplit(".", 1)[0] + ".pdf")
+        fig.savefig(base + ".pdf")
     except Exception:
         pass
+    if EXPORT["tiff"]:
+        try:
+            fig.savefig(base + ".tif", dpi=600, pil_kwargs={"compression": "tiff_lzw"})
+        except Exception:
+            pass
     plt.close(fig)
+    return path
+
+
+def composite(path, panels, captions=None, ncols=2, full_width_first=False):
+    """Une figuras ya guardadas en una figura compuesta con paneles (a), (b), ... a doble columna.
+    Usa los TIFF de 600 dpi si existen. Guarda TIFF 600 dpi, PNG 300 dpi y PDF."""
+    from PIL import Image, ImageDraw, ImageFont
+    imgs = []
+    for p in panels:
+        tif = str(p).rsplit(".", 1)[0] + ".tif"
+        try:
+            imgs.append(Image.open(tif if EXPORT["tiff"] and __import__("os").path.exists(tif) else p).convert("RGB"))
+        except Exception:
+            pass
+    if len(imgs) < 2:
+        return None
+    W = int(DOUBLE_COLUMN_IN * 600)
+    pad = int(0.04 * W / ncols)
+    rows, i = [], 0
+    if full_width_first:
+        rows.append([imgs[0]])
+        i = 1
+    while i < len(imgs):
+        rows.append(imgs[i:i + ncols])
+        i += ncols
+    rendered = []
+    for r in rows:
+        cw = (W - pad * (len(r) - 1)) // len(r)
+        scaled = [im.resize((cw, int(im.height * cw / im.width)), Image.LANCZOS) for im in r]
+        rendered.append(scaled)
+    H = sum(max(im.height for im in r) for r in rendered) + pad * (len(rendered) - 1)
+    canvas = Image.new("RGB", (W, H), "white")
+    draw = ImageDraw.Draw(canvas)
+    try:
+        font_path = __import__("matplotlib").font_manager.findfont(
+            __import__("matplotlib").font_manager.FontProperties(family="sans-serif", weight="bold"))
+        font = ImageFont.truetype(font_path, int(W * 0.022))
+    except Exception:
+        font = ImageFont.load_default()
+    y, k = 0, 0
+    for r in rendered:
+        cw = (W - pad * (len(r) - 1)) // len(r)
+        for j, im in enumerate(r):
+            x = j * (cw + pad)
+            canvas.paste(im, (x, y))
+            draw.text((x + int(W * 0.004), y + int(W * 0.002)), f"({chr(97 + k)})", fill="black", font=font)
+            k += 1
+        y += max(im.height for im in r) + pad
+    base = str(path).rsplit(".", 1)[0]
+    if EXPORT["tiff"]:
+        canvas.save(base + ".tif", dpi=(600, 600), compression="tiff_lzw")
+    canvas.resize((W // 2, H // 2), Image.LANCZOS).save(path, dpi=(300, 300))
+    canvas.resize((W // 2, H // 2), Image.LANCZOS).save(base + ".pdf", resolution=300)
     return path
 
 
@@ -424,10 +493,37 @@ def collaboration_map(path, production, edges, title, max_edges=60):
 
 
 # --------------------------------------------------- HJ-Biplot con conglomerados
+def _cluster_shape(ax, pts, color, include_origin=False):
+    """Envolvente convexa o elipse de confianza (2 DE) según EXPORT['cluster_shape']."""
+    from matplotlib.patches import Ellipse
+    from scipy.spatial import ConvexHull
+    pts = np.asarray(pts, float)
+    if EXPORT["cluster_shape"] == "ellipse" and len(pts) >= 3:
+        P = pts  # elipse alrededor de las puntas de los vectores / de los puntos
+        m = P.mean(axis=0)
+        cov = np.cov(P.T) + np.eye(2) * 1e-6
+        vals, vecs = np.linalg.eigh(cov)
+        ang = np.degrees(np.arctan2(vecs[1, -1], vecs[0, -1]))
+        w, h = 2 * 1.6 * np.sqrt(np.maximum(vals[::-1], 1e-9)) + 0.25
+        ax.add_patch(Ellipse(m, w, h, angle=ang, facecolor=color, alpha=0.12, edgecolor=color, lw=1.0,
+                             ls="--", zorder=1))
+        return
+    P = np.vstack([pts, [[0, 0]]]) if include_origin else pts
+    if len(P) >= 3:
+        try:
+            hull = ConvexHull(P)
+            ax.fill(*P[hull.vertices].T, color=color, alpha=0.12, zorder=1, lw=0)
+            ax.plot(*np.vstack([P[hull.vertices], P[hull.vertices][:1]]).T, color=color, lw=0.8,
+                    ls="--", alpha=0.8, zorder=1)
+        except Exception:
+            pass
+    elif len(P) == 2:
+        ax.plot(*P.T, color=color, lw=6, alpha=0.15, solid_capstyle="round", zorder=1)
+
+
 def biplot(path, hj, title, row_kind="period", col_clusters=None, row_clusters=None, row_color="#0072B2"):
     """Vectores = temas (coloreados por conglomerado, con envolvente); puntos = periodos o países.
     En periodos se dibuja la trayectoria cronológica."""
-    from scipy.spatial import ConvexHull
     R = hj.rows.iloc[:, :2].values
     C = hj.cols.iloc[:, :2].values
     sc = np.linalg.norm(R, axis=1).max() / (np.linalg.norm(C, axis=1).max() + 1e-12)
@@ -441,13 +537,7 @@ def biplot(path, hj, title, row_kind="period", col_clusters=None, row_clusters=N
     for k in sorted(set(cc)):
         idx = np.where(cc == k)[0]
         color = PALETTE[k % len(PALETTE)]
-        pts = np.vstack([Cs[idx], [[0, 0]]])
-        if len(idx) >= 2:
-            try:
-                hull = ConvexHull(pts)
-                ax.fill(*pts[hull.vertices].T, color=color, alpha=0.10, zorder=1, lw=0)
-            except Exception:
-                pass
+        _cluster_shape(ax, Cs[idx], color, include_origin=True)
         for i in idx:
             ax.annotate("", xy=Cs[i], xytext=(0, 0), zorder=2,
                         arrowprops=dict(arrowstyle="-|>", color=color, lw=1.0, mutation_scale=8))
@@ -459,6 +549,9 @@ def biplot(path, hj, title, row_kind="period", col_clusters=None, row_clusters=N
             ax.annotate("", xy=R[i + 1], xytext=R[i], zorder=3,
                         arrowprops=dict(arrowstyle="-|>", color="#555555", lw=0, mutation_scale=9))
     rc = row_clusters if row_clusters is not None else None
+    if rc is not None:
+        for k in sorted(set(rc)):
+            _cluster_shape(ax, R[rc == k], PALETTE[(k + 4) % len(PALETTE)], include_origin=False)
     for i, (x, y) in enumerate(R):
         c = PALETTE[(rc[i] + 4) % len(PALETTE)] if rc is not None else row_color
         ax.scatter(x, y, s=46, color=c, edgecolors="white", linewidths=0.8, zorder=4,

@@ -3,7 +3,8 @@ import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodi
 import { UMAP } from "https://cdn.jsdelivr.net/npm/umap-js@1.4.0/+esm";
 
 const PY_FILES = ["__init__.py", "io.py", "biblio.py", "text.py", "lda_model.py", "bert_model.py",
-  "hjbiplot.py", "compare.py", "figures.py", "report.py", "pipeline.py"];
+  "hjbiplot.py", "compare.py", "figures.py", "report.py", "pipeline.py", "stats.py", "validation.py",
+  "citations.py", "evolution.py"];
 const EMB_MODEL = "Xenova/all-MiniLM-L6-v2";
 const TRANSFORMERS_URL = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.1";
 
@@ -172,17 +173,37 @@ async function render() {
   const tables = JSON.parse(await py.runPythonAsync(`
 json.dumps({k: S.table_json(k) for k in ["T1_main_information", "T2_top_sources", "T3_top_authors",
             "T4_countries", "T5_keywords", "T6_LDA_topics", "T7_BERTopic_topics", "T8_model_metrics",
-            "doc_agreement", "T9_topic_alignment"]}, ensure_ascii=False, default=str)`));
+            "doc_agreement", "T9_topic_alignment", "T8b_inference", "T10_most_cited", "T11_thematic_map",
+            "T12_expert_validation"]}, ensure_ascii=False, default=str)`));
   const labels = JSON.parse(py.runPython("json.dumps(S.topic_labels(), ensure_ascii=False)"));
   post("results", { figs: out, tables, labels }, transfer);
 }
 
-async function setLabels(labels) {
+async function setLabels(labels, aiUsed) {
   await callPy("S.set_labels(json.loads(_lab))", { _lab: JSON.stringify(labels) });
+  if (aiUsed) await py.runPythonAsync("S.set_ai_text({'labels_used': True})");
   await render();
 }
 
-async function buildReport(meta, sections) {
+async function finalRender() {
+  if (!py.runPython("bool(getattr(S, 'final', False))")) {
+    progress(0.1, "Preparando figuras finales (TIFF 600 dpi y figuras compuestas)…");
+    await py.runPythonAsync("S.render('/out', final=True)");
+  }
+}
+
+async function applyFigOpts(opts) {
+  if (!opts) return;
+  await callPy(`
+_o = json.loads(_opts)
+if any(S.cfg.get(k) != v for k, v in _o.items()):
+    S.cfg.update(_o)
+    S.final = False`, { _opts: JSON.stringify(opts) });
+}
+
+async function buildReport(meta, sections, opts) {
+  await applyFigOpts(opts);
+  await finalRender();
   await callPy(`report.build(S, "/out/Borrador_Metodos_Resultados.docx", json.loads(_meta), json.loads(_sec))`,
     { _meta: JSON.stringify(meta), _sec: JSON.stringify(sections) });
   const data = py.FS.readFile("/out/Borrador_Metodos_Resultados.docx");
@@ -190,7 +211,55 @@ async function buildReport(meta, sections) {
     mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }, [data.buffer]);
 }
 
-async function zipAll() {
+async function bytesOut(code, name, mime) {
+  const b = await py.runPythonAsync(code);
+  const data = b.toJs();
+  b.destroy();
+  post("file", { name, data, mime }, [data.buffer]);
+}
+
+async function saveProject() {
+  progress(0.3, "Guardando el proyecto…");
+  await bytesOut("S.save_project()", `BiblioTopic_${new Date().toISOString().slice(0, 10)}.bibliotopic`,
+    "application/octet-stream");
+}
+
+async function openProject(data) {
+  progress(0.1, "Abriendo el proyecto…");
+  py.globals.set("_proj", data);
+  await py.runPythonAsync("S = pipeline.Session.load_project(_proj.to_bytes())");
+  const cfg = JSON.parse(py.runPython("json.dumps(S.cfg, default=str)"));
+  post("project", { cfg });
+  await render();
+  post("done", { elapsed: 0 });
+}
+
+async function validationSheet() {
+  await bytesOut("S.validation_sheet()", "BiblioTopic_validation_sheet.xlsx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+}
+
+async function validationLoad(files) {
+  py.globals.set("_vf", files.map((f) => [f.name, f.data]));
+  const out = await py.runPythonAsync(
+    "json.dumps(S.load_validation([(str(f[0]), f[1].to_bytes()) for f in _vf]), ensure_ascii=False, default=str)");
+  post("validation", { result: JSON.parse(out) });
+  await render();
+}
+
+async function aiContext() {
+  const out = await py.runPythonAsync("json.dumps(S.ai_context(), ensure_ascii=False, default=str)");
+  post("ai_context", { ctx: JSON.parse(out) });
+}
+
+async function aiSet(texts) {
+  await callPy("S.set_ai_text(json.loads(_ai))", { _ai: JSON.stringify(texts) });
+  post("ai_saved", {});
+}
+
+async function zipAll(opts) {
+  await applyFigOpts(opts);
+  await finalRender();
   const b = await py.runPythonAsync("S.zip_outputs('/out')");
   const data = b.toJs();
   b.destroy();
@@ -203,9 +272,15 @@ self.onmessage = async (ev) => {
     if (cmd === "init") await init();
     else if (cmd === "load") await loadFiles(ev.data.files);
     else if (cmd === "run") await run(ev.data.cfg);
-    else if (cmd === "labels") await setLabels(ev.data.labels);
-    else if (cmd === "report") await buildReport(ev.data.meta, ev.data.sections);
-    else if (cmd === "zip") await zipAll();
+    else if (cmd === "labels") await setLabels(ev.data.labels, ev.data.aiUsed);
+    else if (cmd === "save_project") await saveProject();
+    else if (cmd === "open_project") await openProject(ev.data.data);
+    else if (cmd === "val_sheet") await validationSheet();
+    else if (cmd === "val_load") await validationLoad(ev.data.files);
+    else if (cmd === "ai_context") await aiContext();
+    else if (cmd === "ai_set") await aiSet(ev.data.texts);
+    else if (cmd === "report") await buildReport(ev.data.meta, ev.data.sections, ev.data.opts);
+    else if (cmd === "zip") await zipAll(ev.data.opts);
   } catch (e) {
     post("error", { msg: String(e.message || e) });
   }
