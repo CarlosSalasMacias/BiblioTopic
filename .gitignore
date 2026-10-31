@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.venv/
+resultados/
+*.pkl
+.DS_Store
