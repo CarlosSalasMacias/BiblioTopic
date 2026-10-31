@@ -68,10 +68,17 @@ tabs = st.tabs(["📥 Datos", "📊 Bibliometría", "🧩 LDA", "🤖 BERTopic",
 with tabs[0]:
     st.subheader("Cargar exportaciones")
     st.markdown("Suba **todos los lotes** de WoS (*Tab-delimited* o *Plain text*, contenido **Full Record "
-                "and Cited References**) y/o de Scopus (*CSV* con todos los campos).")
-    ups = st.file_uploader("Archivos", type=["txt", "csv", "tsv"], accept_multiple_files=True)
+                "and Cited References**) y/o de Scopus (*CSV* con todos los campos). También acepta archivos **.zip** con varios lotes dentro.")
+    ups = st.file_uploader("Archivos", type=["txt", "csv", "tsv", "zip"], accept_multiple_files=True)
     if ups:
-        files = [(u.name, u.getvalue()) for u in ups]
+        files = []
+        for u in ups:
+            if u.name.lower().endswith(".zip"):
+                with zipfile.ZipFile(io.BytesIO(u.getvalue())) as z:
+                    files += [(n.split("/")[-1], z.read(n)) for n in z.namelist()
+                              if n.lower().endswith((".txt", ".csv", ".tsv")) and not n.startswith("__MACOSX")]
+            else:
+                files.append((u.name, u.getvalue()))
         if ss.get("file_names") != [n for n, _ in files]:
             frames = []
             errs = []

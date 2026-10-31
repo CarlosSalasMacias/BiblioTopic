@@ -28,7 +28,7 @@ embeddings (~90 MB), así que necesita internet.
 ## Cómo exportar los datos
 
 **Web of Science:** *Export → Tab delimited file* (o *Plain text*), **Record Content: Full Record and
-Cited References**. WoS exporta de 1 000 en 1 000 registros: descargue todos los lotes y súbalos juntos.
+Cited References**. WoS exporta de 1 000 en 1 000 registros: descargue todos los lotes y súbalos juntos (o comprímalos en un .zip y suba solo ese archivo).
 
 > Si exporta solo "Author, Title, Source, Abstract" no habrá países, palabras clave ni citas.
 
