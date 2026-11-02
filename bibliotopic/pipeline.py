@@ -64,6 +64,7 @@ class Session:
         self.merge_stats, self.availability, self.excl_steps = {}, {}, []
         self.df = self.corpus = self.ksel = self.lda = self.bert = None
         self.has_countries = False
+        self.strategy = None  # estrategia de búsqueda aprobada en el paso 1
         self.emb_name = ""
         self.tables, self.figs, self.facts = {}, {}, {}
         self.versions = _versions()

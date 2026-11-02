@@ -1,5 +1,6 @@
 // BiblioTopic — interfaz (hilo principal). El trabajo pesado ocurre en js/worker.js.
 const $ = (id) => document.getElementById(id);
+import * as strategy from "./strategy.js";
 const worker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
 const state = { analyses: {}, sections: {}, summary: null, labels: null, busy: false, aiLabels: false, aiModel: "" };
 
@@ -39,6 +40,29 @@ function busy(on) {
   for (const id of ["b-load", "b-run", "b-labels", "b-doc", "b-zip", "b-save", "b-val-sheet", "b-ai-labels",
     "b-ai-disc"]) $(id).disabled = on;
 }
+
+// ------------------------------------------------------------------ tema y estrategia de búsqueda
+// Términos del primer concepto como palabras a quitar del texto (están en casi todos los documentos)
+const queryWords = (st) => [...new Set((st.concepts[0]?.terms || []).filter((t) => t.on)
+  .map((t) => t.term.replace(/["*]/g, "").trim().toLowerCase()).filter((t) => t && !/\s/.test(t)))].slice(0, 8);
+
+function applyStrategy(st, fromProject) {
+  $("s-data").hidden = false;
+  $("m-topic").value = st.topic_en || st.topic || "";
+  $("m-query").value = `Scopus: ${st.query_scopus}\n\nWeb of Science: ${st.query_wos}`;
+  if (!$("o-q").value.trim()) $("o-q").value = queryWords(st).join(", ");
+  if (!fromProject) {
+    worker.postMessage({ cmd: "strategy", strategy: st });
+    $("s-data").scrollIntoView({ behavior: "smooth" });
+    toast("Estrategias aprobadas. Ya puede cargar las exportaciones de Scopus y Web of Science.", 8000);
+  }
+}
+strategy.init({
+  toast,
+  getKey: () => $("ai-key").value.trim(),
+  onAIUsed: (model) => { state.aiModel = model; state.aiStrategy = true; },
+  onApproved: (st) => applyStrategy(st, false),
+});
 
 // ------------------------------------------------------------------ archivos
 let files = { scopus: [], wos: [] };
@@ -220,9 +244,10 @@ const getContext = () => new Promise((res) => { ctxResolve = res; worker.postMes
 function needKey() {
   const k = $("ai-key").value.trim();
   if (!k) {
-    $("ai-box").open = true;
+    document.querySelector("#s-topic .keybox").open = true;
+    $("ai-key").scrollIntoView({ behavior: "smooth", block: "center" });
     $("ai-key").focus();
-    toast("Escriba su clave de API de Anthropic en «Asistencia con IA» (sección 4).");
+    toast("Escriba su clave de API de Anthropic en el paso 1.");
   }
   return k;
 }
@@ -343,7 +368,7 @@ $("b-doc").onclick = () => {
     meta: { topic_name: $("m-topic").value.trim(), title: $("m-title").value.trim(),
             query: $("m-query").value.trim(), search_date: $("m-date").value.trim(),
             composite: $("m-comp").checked, ai_model: state.aiModel ? "Claude Opus 5.5" : "",
-            ai_title: !!state.titleAI },
+            ai_title: !!state.titleAI, ai_strategy: !!state.aiStrategy },
     opts: figOpts(),
   });
 };
@@ -413,6 +438,11 @@ worker.onmessage = ({ data: m }) => {
       toast(m.msg, 9000);
       break;
     case "project":
+      if (m.strategy) {
+        strategy.restore(m.strategy);
+        applyStrategy(m.strategy, true);
+      }
+      $("s-data").hidden = false;
       $("s-analyses").hidden = false;
       $("run-status").hidden = false;
       toast("Proyecto abierto.");

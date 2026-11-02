@@ -51,10 +51,18 @@ from bibliotopic import pipeline, report
 from bibliotopic.bert_model import lsa_embeddings
 S = pipeline.Session()
 `);
+  if (pendingStrategy) await setStrategy(pendingStrategy);
   const analyses = JSON.parse(py.runPython("json.dumps(pipeline.ANALYSES, ensure_ascii=False)"));
   const sections = JSON.parse(py.runPython("json.dumps(report.SECTIONS, ensure_ascii=False)"));
   progress(1, "Listo");
   post("ready", { analyses, sections });
+}
+
+let pendingStrategy = null;
+async function setStrategy(st) {
+  if (!py || !py.globals.get("S")) { pendingStrategy = st; return; }
+  await callPy("S.strategy = json.loads(_st)", { _st: JSON.stringify(st) });
+  pendingStrategy = null;
 }
 
 function callPy(code, args = {}) {
@@ -229,7 +237,8 @@ async function openProject(data) {
   py.globals.set("_proj", data);
   await py.runPythonAsync("S = pipeline.Session.load_project(_proj.to_bytes())");
   const cfg = JSON.parse(py.runPython("json.dumps(S.cfg, default=str)"));
-  post("project", { cfg });
+  const strategy = JSON.parse(py.runPython("json.dumps(getattr(S, 'strategy', None), default=str)"));
+  post("project", { cfg, strategy });
   await render();
   post("done", { elapsed: 0 });
 }
@@ -288,6 +297,7 @@ self.onmessage = async (ev) => {
     else if (cmd === "report") await buildReport(ev.data.meta, ev.data.sections, ev.data.opts);
     else if (cmd === "zip") await zipAll(ev.data.opts);
     else if (cmd === "titles") await proposeTitles(ev.data.meta);
+    else if (cmd === "strategy") await setStrategy(ev.data.strategy);
   } catch (e) {
     post("error", { msg: String(e.message || e) });
   }

@@ -10,6 +10,15 @@ Se recomienda Chrome o Edge actualizados y una computadora con al menos 8 GB de 
 
 ## Qué hace
 
+**Estrategia de búsqueda**
+- A partir del tema de investigación, propone los conceptos principales, sinónimos, variantes y truncamientos en
+  inglés, términos de exclusión agrupados y razonados (los que podrían eliminar estudios pertinentes se marcan con
+  precaución) y filtros por área temática de Scopus y categorías de WoS. La propuesta completa requiere una
+  clave de API de Anthropic; sin ella se genera una propuesta básica.
+- Todo es editable: aceptar o descartar términos y grupos, añadir o modificar términos, revisar la lista final.
+- Genera y valida las ecuaciones para Scopus (TITLE-ABS-KEY) y Web of Science Core Collection (TS), que se pueden
+  editar, copiar y exportar. Tras aprobarlas se habilita la carga del corpus, y se describen en los Métodos.
+
 **Datos**
 - Fusiona el CSV de Scopus y los lotes de WoS (también en .zip), elimina duplicados (DOI y título + año) y genera
   un diagrama de flujo tipo PRISMA.
@@ -28,7 +37,7 @@ Se recomienda Chrome o Edge actualizados y una computadora con al menos 8 GB de 
 - **BERTopic:** embeddings de lenguaje (all-MiniLM-L6-v2), UMAP, HDBSCAN y c-TF-IDF, con el mismo vocabulario que LDA.
 - **Dinámica temporal:** temas emergentes y en declive.
 - **HJ-Biplot** de periodos × temas y de países × temas, con conglomerados de Ward (k elegido por silueta),
-  mostrados como envolventes o elipses.
+  mostrados como envolventes convexas o elipses (una sola forma por figura y sin superposición).
 
 **Comparación LDA vs BERTopic**
 - Coherencia, diversidad, estabilidad, emparejamiento húngaro de temas, ARI/NMI e Índice de Robustez Temática (TRI).
@@ -39,12 +48,14 @@ Se recomienda Chrome o Edge actualizados y una computadora con al menos 8 GB de 
 - Lectura de las hojas completadas y cálculo del alfa de Krippendorff.
 
 **Asistencia con IA (opcional, con su propia clave de API de Anthropic)**
-- Propuesta de nombres para los temas.
+- Estrategia de búsqueda a partir del tema.
+- Propuesta de nombres para los temas y de títulos para el artículo.
 - Borrador de la Discusión en español que solo cita documentos del propio corpus; donde hace falta literatura
   externa deja la marca `[cita externa]`.
 
 **Salidas**
-- Documento Word con los apartados elegidos: texto en español; título, figuras y tablas en inglés.
+- Documento Word con los apartados elegidos: texto en español; título, figuras y tablas en inglés; texto en negro
+  y figuras sin título (la descripción va en la leyenda).
 - Lista de verificación de reporte y declaración de disponibilidad de datos y código.
 - Figuras a doble columna (175 mm) en TIFF 600 dpi, PNG 300 dpi y PDF vectorial, con figuras compuestas
   con paneles (a), (b), (c).
@@ -52,12 +63,16 @@ Se recomienda Chrome o Edge actualizados y una computadora con al menos 8 GB de 
 
 ## Uso
 
-1. Suba el CSV de Scopus y/o uno o varios lotes de WoS.
-2. Marque los análisis (y, si lo desea, ajuste las opciones avanzadas) y pulse **Ejecutar análisis**.
-3. Ponga nombre a cada tema (o pida propuestas a la IA) y pulse **Aplicar nombres**.
-4. Opcional: descargue la hoja de validación, envíela a los evaluadores y cargue las hojas completadas.
-5. Elija los apartados del documento y descargue el Word y el .zip de figuras y tablas.
-6. Use **Guardar proyecto** para continuar otro día sin repetir el análisis.
+1. Escriba el tema de investigación, pulse **Siguiente**, revise la estrategia de búsqueda y apruebe las
+   ecuaciones de Scopus y Web of Science.
+2. Ejecute las búsquedas en cada base de datos, exporte los resultados y suba el CSV de Scopus y/o uno o varios
+   lotes de WoS.
+3. Marque los análisis (y, si lo desea, ajuste las opciones avanzadas) y pulse **Ejecutar análisis**.
+4. Ponga nombre a cada tema (o pida propuestas a la IA) y pulse **Aplicar nombres**.
+5. Opcional: descargue la hoja de validación, envíela a los evaluadores y cargue las hojas completadas.
+6. Elija el título (la aplicación propone varios), los apartados del documento y descargue el Word y el .zip de
+   figuras y tablas.
+7. Use **Guardar proyecto** para continuar otro día sin repetir el análisis.
 
 ### Cómo exportar los datos
 
