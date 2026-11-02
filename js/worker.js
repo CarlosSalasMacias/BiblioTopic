@@ -257,6 +257,12 @@ async function aiSet(texts) {
   post("ai_saved", {});
 }
 
+async function proposeTitles(meta) {
+  const out = await callPy("json.dumps(S.propose_titles(json.loads(_meta)), ensure_ascii=False)",
+    { _meta: JSON.stringify(meta || {}) });
+  post("titles", { titles: JSON.parse(out) });
+}
+
 async function zipAll(opts) {
   await applyFigOpts(opts);
   await finalRender();
@@ -281,6 +287,7 @@ self.onmessage = async (ev) => {
     else if (cmd === "ai_set") await aiSet(ev.data.texts);
     else if (cmd === "report") await buildReport(ev.data.meta, ev.data.sections, ev.data.opts);
     else if (cmd === "zip") await zipAll(ev.data.opts);
+    else if (cmd === "titles") await proposeTitles(ev.data.meta);
   } catch (e) {
     post("error", { msg: String(e.message || e) });
   }

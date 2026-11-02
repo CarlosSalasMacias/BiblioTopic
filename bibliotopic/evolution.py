@@ -79,7 +79,6 @@ def plot_callon(path, t, title="Thematic map"):
     ax.set_ylim(-0.05, 1.08)
     ax.set_xlabel("Relevance degree (centrality, rank)")
     ax.set_ylabel("Development degree (density, rank)")
-    ax.set_title(title)
     return F._save(fig, path)
 
 
@@ -154,5 +153,4 @@ def plot_sankey(path, layers, links, title="Thematic evolution"):
     ax.set_xlim(-0.4, nper - 0.6)
     ax.set_ylim(-0.02, 1.08)
     ax.axis("off")
-    ax.set_title(title, pad=14)
     return F._save(fig, path)

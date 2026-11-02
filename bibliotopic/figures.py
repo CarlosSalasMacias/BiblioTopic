@@ -151,7 +151,6 @@ def annual_production(path, ap):
         ax2.plot(ap["Year"], ap["MeanTCperYear"], color=ORANGE, lw=1.5, label="Mean citations/year")
         ax2.set_ylabel("Mean citations per year", color=ORANGE)
         ax2.spines["top"].set_visible(False)
-    ax.set_title("Annual scientific production")
     return _save(fig, path)
 
 
@@ -160,7 +159,6 @@ def barh(path, labels, values, title, xlabel, color=BLUE, n=15):
     fig, ax = plt.subplots(figsize=(6.5, 0.32 * len(labels) + 1))
     ax.barh([wrap(l, 45) for l in labels], values, color=color)
     ax.set_xlabel(xlabel)
-    ax.set_title(title)
     for i, v in enumerate(values):
         ax.text(v, i, f" {v:g}", va="center", fontsize=7.5)
     return _save(fig, path)
@@ -172,7 +170,6 @@ def country_scp_mcp(path, cp):
     ax.barh(cp["Country"], cp["SCP"], color=BLUE, label="SCP (single-country)")
     ax.barh(cp["Country"], cp["MCP"], left=cp["SCP"], color=ORANGE, label="MCP (multi-country)")
     ax.set_xlabel("Documents (corresponding author's country)")
-    ax.set_title("Most productive countries")
     ax.legend(frameon=False, loc="lower right")
     return _save(fig, path)
 
@@ -213,7 +210,6 @@ def topic_words(path, weights, words, labels, title, color=BLUE, ncols=4, n=8):
         ax.set_title(wrap(labels[i], 30), fontsize=7.5)
         ax.tick_params(axis="y", labelsize=7)
         ax.tick_params(axis="x", labelsize=6)
-    fig.suptitle(title, y=1.0)
     fig.tight_layout()
     return _save(fig, path)
 
@@ -226,7 +222,6 @@ def topic_heatmap_time(path, m, labels, title, cmap="Blues"):
     ax.set_xticks(range(m.shape[0]), m.index, rotation=45, ha="right")
     ax.set_yticks(range(m.shape[1]), [wrap(l, 40) for l in labels], fontsize=7)
     fig.colorbar(im, ax=ax, label="Mean topic prevalence", shrink=0.7)
-    ax.set_title(title)
     return _save(fig, path)
 
 
@@ -247,7 +242,6 @@ def doc_map(path, xy, topics, labels, title):
     ax.set_yticks([])
     ax.set_xlabel("UMAP 1")
     ax.set_ylabel("UMAP 2")
-    ax.set_title(title)
     return _save(fig, path)
 
 
@@ -263,7 +257,6 @@ def similarity_heatmap(path, S, matches, title):
     ax.set_xlabel("BERTopic topics")
     ax.set_ylabel("LDA topics")
     fig.colorbar(im, ax=ax, label="Cosine similarity", shrink=0.7)
-    ax.set_title(title)
     return _save(fig, path)
 
 
@@ -276,7 +269,6 @@ def contingency(path, cont, title):
     ax.set_xlabel("BERTopic topic (document assignment)")
     ax.set_ylabel("LDA dominant topic")
     fig.colorbar(im, ax=ax, label="Row proportion", shrink=0.7)
-    ax.set_title(title)
     return _save(fig, path)
 
 
@@ -292,7 +284,8 @@ def trends(path, tl, tb, lda_labels, bert_labels):
                 for i in order]
         ax.barh([wrap(labs[i], 34) for i in order], t["Slope"].values[order] * 100, color=cols)
         ax.axvline(0, color=GREY, lw=0.6)
-        ax.set_title(f"{name}: hot (red) and cold (blue) topics")
+        if len(panels) > 1:
+            ax.set_title(name)
         ax.set_xlabel("Slope of annual prevalence (×100)")
         ax.tick_params(axis="y", labelsize=6.5)
     fig.tight_layout()
@@ -309,7 +302,6 @@ def strategic(path, sm, title):
         ax.text(xi, yi, " " + l.split(":")[0], fontsize=7.5)
     ax.set_xlabel("Growth: slope of annual prevalence (×100)")
     ax.set_ylabel("Impact: mean citations per year")
-    ax.set_title(title)
     return _save(fig, path)
 
 
@@ -416,7 +408,6 @@ def network(path, nodes, edges, title, top_nodes=50, normalize="association", mi
                for i, c in enumerate(comms[:8])]
     ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.01), ncol=2, frameon=False,
               fontsize=7.5)
-    ax.set_title(title)
     ax.axis("off")
     ax.margins(0.08)
     _save(fig, path)
@@ -488,77 +479,156 @@ def collaboration_map(path, production, edges, title, max_edges=60):
     ax.set_ylim(-58, 85)
     ax.set_aspect("equal")
     ax.axis("off")
-    ax.set_title(title)
     return _save(fig, path)
 
 
 # --------------------------------------------------- HJ-Biplot con conglomerados
-def _cluster_shape(ax, pts, color, include_origin=False):
-    """Envolvente convexa o elipse de confianza (2 DE) según EXPORT['cluster_shape']."""
-    from matplotlib.patches import Ellipse
+def _shape_poly(pts, kind, pad):
+    """Polígono que encierra los puntos de un conglomerado: envolvente convexa redondeada o elipse.
+    Funciona igual con 1, 2 o más puntos, para que todas las formas de una figura sean del mismo tipo."""
     from scipy.spatial import ConvexHull
-    pts = np.asarray(pts, float)
-    if EXPORT["cluster_shape"] == "ellipse" and len(pts) >= 3:
-        P = pts  # elipse alrededor de las puntas de los vectores / de los puntos
-        m = P.mean(axis=0)
-        cov = np.cov(P.T) + np.eye(2) * 1e-6
-        vals, vecs = np.linalg.eigh(cov)
-        ang = np.degrees(np.arctan2(vecs[1, -1], vecs[0, -1]))
-        w, h = 2 * 1.6 * np.sqrt(np.maximum(vals[::-1], 1e-9)) + 0.25
-        ax.add_patch(Ellipse(m, w, h, angle=ang, facecolor=color, alpha=0.12, edgecolor=color, lw=1.0,
-                             ls="--", zorder=1))
-        return
-    P = np.vstack([pts, [[0, 0]]]) if include_origin else pts
-    if len(P) >= 3:
+    P = np.asarray(pts, float)
+    t = np.linspace(0, 2 * np.pi, 72, endpoint=False)
+    circle = np.c_[np.cos(t), np.sin(t)]
+    if kind == "ellipse":
+        if len(P) == 1:
+            return P[0] + pad * circle
+        if len(P) == 2:
+            m = P.mean(axis=0)
+            d = P[1] - P[0]
+            L = np.linalg.norm(d) / 2
+            u = d / (2 * L + 1e-12)
+            v = np.array([-u[1], u[0]])
+            return m + np.outer(circle[:, 0] * (L + pad), u) + np.outer(circle[:, 1] * pad, v)
+        m, A = _mvee(P)
+        vals, vecs = np.linalg.eigh(np.linalg.inv(A))
+        axes_ = np.sqrt(np.maximum(vals, 0)) + pad
+        return m + (circle * axes_) @ vecs.T
+    Q = (P[:, None, :] + pad * circle[None, :, :]).reshape(-1, 2)
+    hull = ConvexHull(Q)
+    return Q[hull.vertices]
+
+
+def _mvee(P, tol=1e-4, it=500):
+    """Elipse de volumen mínimo que contiene los puntos (algoritmo de Khachiyan): centro y matriz A,
+    tal que (x - c)ᵀ A (x - c) ≤ 1."""
+    n, d = P.shape
+    Q = np.vstack([P.T, np.ones(n)])
+    u = np.full(n, 1 / n)
+    for _ in range(it):
+        X = Q @ np.diag(u) @ Q.T
         try:
-            hull = ConvexHull(P)
-            ax.fill(*P[hull.vertices].T, color=color, alpha=0.12, zorder=1, lw=0)
-            ax.plot(*np.vstack([P[hull.vertices], P[hull.vertices][:1]]).T, color=color, lw=0.8,
-                    ls="--", alpha=0.8, zorder=1)
-        except Exception:
-            pass
-    elif len(P) == 2:
-        ax.plot(*P.T, color=color, lw=6, alpha=0.15, solid_capstyle="round", zorder=1)
+            M = np.einsum("ij,ji->i", Q.T @ np.linalg.inv(X), Q)
+        except np.linalg.LinAlgError:
+            break
+        j = int(np.argmax(M))
+        step = (M[j] - d - 1) / ((d + 1) * (M[j] - 1))
+        new = (1 - step) * u
+        new[j] += step
+        if np.linalg.norm(new - u) < tol:
+            u = new
+            break
+        u = new
+    c = P.T @ u
+    cov = P.T @ np.diag(u) @ P - np.outer(c, c) + np.eye(d) * 1e-9
+    return c, np.linalg.inv(cov) / d
 
 
-def biplot(path, hj, title, row_kind="period", col_clusters=None, row_clusters=None, row_color="#0072B2"):
-    """Vectores = temas (coloreados por conglomerado, con envolvente); puntos = periodos o países.
-    En periodos se dibuja la trayectoria cronológica."""
+def _polys_overlap(polys):
+    from matplotlib.path import Path
+    paths = [Path(np.vstack([p, p[:1]])) for p in polys]
+    for i in range(len(paths)):
+        for j in range(i + 1, len(paths)):
+            if paths[i].intersects_path(paths[j], filled=True):
+                return True
+    return False
+
+
+def _fit_shapes(groups, kind, lim):
+    """Formas sin superposición: prueba márgenes decrecientes; None si ninguno evita el solapamiento."""
+    for f in (0.05, 0.035, 0.022, 0.012):
+        polys = [_shape_poly(g, kind, f * lim) for g in groups]
+        if not _polys_overlap(polys):
+            return polys
+    return None
+
+
+def _biplot_geometry(hj):
     R = hj.rows.iloc[:, :2].values
     C = hj.cols.iloc[:, :2].values
     sc = np.linalg.norm(R, axis=1).max() / (np.linalg.norm(C, axis=1).max() + 1e-12)
     Cs = C * sc
     lim = 1.22 * max(np.abs(R).max(), np.abs(Cs).max())
+    return R, Cs, lim
+
+
+def _groups(X, lab):
+    return [X[lab == k] for k in sorted(set(lab))] if lab is not None else []
+
+
+def biplot_clusters(hj, rows=False, kmax=5):
+    """Elige los conglomerados (Ward, k por silueta) cuyas formas no se superponen en la figura.
+    Devuelve (col_lab, k_cols, sil_cols, row_lab, k_rows, sil_rows); row_* es (None, 1, nan) si rows=False.
+    Se recorre k en orden de silueta y se toma la primera solución cuyas formas no se solapan;
+    con países, las formas encierran a los grupos de países y los temas se agrupan solo por color."""
+    from .hjbiplot import cluster_candidates
+    R, Cs, lim = _biplot_geometry(hj)
+    kind = EXPORT["cluster_shape"]
+    none = (None, 1, float("nan"))
+    if not rows:
+        col = next((c for c in cluster_candidates(Cs, kmax) if _fit_shapes(_groups(Cs, c[0]), kind, lim)), none)
+        return (*col, *none)
+    # Países × temas: las formas encierran a los países; los temas se distinguen solo por color
+    cands = cluster_candidates(Cs, kmax)
+    col = cands[0] if cands else none
+    row = next((r for r in cluster_candidates(R, kmax) if _fit_shapes(_groups(R, r[0]), kind, lim)), none)
+    if row[0] is None:  # sin grupos de países: las formas pasan a los temas
+        col = next((c for c in cands if _fit_shapes(_groups(Cs, c[0]), kind, lim)), none)
+    return (*col, *row)
+
+
+def biplot(path, hj, title=None, row_kind="period", col_clusters=None, row_clusters=None, row_color="#0072B2"):
+    """Vectores = temas (coloreados por conglomerado); puntos = periodos o países.
+    Cada conglomerado se encierra con una sola forma (envolvente convexa o elipse) y las formas no se
+    superponen. En periodos se dibuja la trayectoria cronológica. Sin título: va en la leyenda del manuscrito."""
+    R, Cs, lim = _biplot_geometry(hj)
     fig, ax = plt.subplots(figsize=(7, 6.4))
     ax.axhline(0, color="#d0d0d0", lw=0.6, zorder=0)
     ax.axvline(0, color="#d0d0d0", lw=0.6, zorder=0)
-    cc = col_clusters if col_clusters is not None else np.zeros(len(C), int)
+    cc = col_clusters if col_clusters is not None else np.zeros(len(Cs), int)
+    rc = row_clusters
+    gcol = [PALETTE[k % len(PALETTE)] for k in sorted(set(cc))] if col_clusters is not None else []
+    grow = [PALETTE[(k + 4) % len(PALETTE)] for k in sorted(set(rc))] if rc is not None else []
+    # Una sola familia de formas por figura: países si están agrupados; si no, temas
+    groups, colors = (_groups(R, rc), grow) if rc is not None else (_groups(Cs, col_clusters), gcol)
+    polys = _fit_shapes(groups, EXPORT["cluster_shape"], lim) if colors else None
+    if polys:
+        lim = max(lim, 1.04 * max(np.abs(p).max() for p in polys))
+    for poly, color in zip(polys or [], colors):
+        ax.fill(*poly.T, color=color, alpha=0.12, lw=0, zorder=1)
+        ax.plot(*np.vstack([poly, poly[:1]]).T, color=color, lw=0.9, ls="--", alpha=0.9, zorder=1)
     texts = []
-    for k in sorted(set(cc)):
-        idx = np.where(cc == k)[0]
-        color = PALETTE[k % len(PALETTE)]
-        _cluster_shape(ax, Cs[idx], color, include_origin=True)
-        for i in idx:
-            ax.annotate("", xy=Cs[i], xytext=(0, 0), zorder=2,
-                        arrowprops=dict(arrowstyle="-|>", color=color, lw=1.0, mutation_scale=8))
-            texts.append(_halo(ax.text(*(Cs[i] * 1.07), hj.cols.index[i], color=color, fontsize=7.5,
-                                       ha="center", va="center", fontweight="bold", zorder=5)))
+    for i in range(len(Cs)):
+        color = PALETTE[cc[i] % len(PALETTE)]
+        ax.annotate("", xy=Cs[i], xytext=(0, 0), zorder=2,
+                    arrowprops=dict(arrowstyle="-|>", color=color, lw=1.0, mutation_scale=8))
+        texts.append(_halo(ax.text(*(Cs[i] * 1.07), hj.cols.index[i], color=color, fontsize=7.5,
+                                   ha="center", va="center", fontweight="bold", zorder=5)))
     if row_kind == "period":
         ax.plot(R[:, 0], R[:, 1], color="#555555", lw=0.9, ls=(0, (3, 2)), zorder=3)
         for i in range(len(R) - 1):
             ax.annotate("", xy=R[i + 1], xytext=R[i], zorder=3,
                         arrowprops=dict(arrowstyle="-|>", color="#555555", lw=0, mutation_scale=9))
-    rc = row_clusters if row_clusters is not None else None
-    if rc is not None:
-        for k in sorted(set(rc)):
-            _cluster_shape(ax, R[rc == k], PALETTE[(k + 4) % len(PALETTE)], include_origin=False)
     for i, (x, y) in enumerate(R):
         c = PALETTE[(rc[i] + 4) % len(PALETTE)] if rc is not None else row_color
         ax.scatter(x, y, s=46, color=c, edgecolors="white", linewidths=0.8, zorder=4,
                    marker="s" if row_kind == "period" else "o")
         texts.append(_halo(ax.text(x, y, " " + str(hj.rows.index[i]), fontsize=7.5, color="#1a1a1a",
                                    zorder=5)))
-    _repel(ax, texts)
+    ax.set_xlim(-lim, lim)
+    ax.set_ylim(-lim, lim)
+    ax.set_aspect("equal")
+    _repel(ax, texts)  # con los límites ya fijados, para que no arrastre las etiquetas hacia dentro
     if col_clusters is not None:
         handles = [Line2D([], [], color=PALETTE[k % len(PALETTE)], lw=2.5, label=f"Topic cluster {k + 1}")
                    for k in sorted(set(cc))]
@@ -571,5 +641,4 @@ def biplot(path, hj, title, row_kind="period", col_clusters=None, row_clusters=N
     ax.set_aspect("equal")
     ax.set_xlabel(f"Axis 1 ({100 * hj.inertia[0]:.1f}%)")
     ax.set_ylabel(f"Axis 2 ({100 * hj.inertia[1]:.1f}%)")
-    ax.set_title(title)
     return _save(fig, path)

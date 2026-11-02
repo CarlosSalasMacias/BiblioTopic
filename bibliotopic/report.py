@@ -7,7 +7,7 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Cm, Pt
+from docx.shared import Cm, Pt, RGBColor
 
 REFS = {
     "aria": "Aria, M., & Cuccurullo, C. (2017). bibliometrix: An R-tool for comprehensive science mapping analysis. Journal of Informetrics, 11(4), 959–975. https://doi.org/10.1016/j.joi.2017.08.007",
@@ -84,6 +84,29 @@ class Writer:
         st.font.name = "Times New Roman"
         st.font.size = Pt(12)
         st.element.rPr.rFonts.set(qn("w:eastAsia"), "Times New Roman")
+        st.font.color.rgb = RGBColor(0, 0, 0)
+        # Títulos y subtítulos en negro y en la misma fuente (los estilos por defecto de Word son azules)
+        sizes = {"Title": 15, "Heading 1": 14, "Heading 2": 12, "Heading 3": 12, "Heading 4": 12}
+        for name, size in sizes.items():
+            hs = self.doc.styles[name]
+            hs.font.name = "Times New Roman"
+            hs.font.size = Pt(size)
+            hs.font.bold = True
+            hs.font.italic = name in ("Heading 3", "Heading 4")
+            hs.font.color.rgb = RGBColor(0, 0, 0)
+            rpr = hs.element.get_or_add_rPr()
+            fonts = rpr.find(qn("w:rFonts"))
+            if fonts is None:
+                fonts = OxmlElement("w:rFonts")
+                rpr.append(fonts)
+            for a in ("w:ascii", "w:hAnsi", "w:eastAsia", "w:cs"):
+                fonts.set(qn(a), "Times New Roman")
+            for a in ("w:asciiTheme", "w:hAnsiTheme", "w:eastAsiaTheme", "w:cstheme"):
+                fonts.attrib.pop(qn(a), None)
+            if name == "Title":
+                pbdr = hs.element.get_or_add_pPr().find(qn("w:pBdr"))
+                if pbdr is not None:
+                    pbdr.getparent().remove(pbdr)
         for s in self.doc.sections:
             s.left_margin = s.right_margin = Cm(2.5)
         self.fig_n, self.tab_n = 0, 0
@@ -174,9 +197,6 @@ class Writer:
             for run in cell.paragraphs[0].runs:
                 run.bold = True
                 run.font.size = Pt(font)
-            sh = OxmlElement("w:shd")
-            sh.set(qn("w:fill"), "DCE6F0")
-            cell._tc.get_or_add_tcPr().append(sh)
         for row in df.itertuples(index=False):
             cells = t.add_row().cells
             for i, v in enumerate(row):
@@ -253,15 +273,15 @@ FIG_CAPTIONS = {
     "ksel": "Selection of the number of LDA topics (K) with four normalised metrics. Dashed line: selected K.",
     "lda_words": "Top terms of the LDA topics (word–topic probability).",
     "lda_time": "Mean prevalence of LDA topics by period.",
-    "hj_lda": "HJ-Biplot of periods (squares, joined chronologically) and LDA topics (vectors). Colours and shaded hulls: topic clusters (Ward linkage, number of clusters selected by silhouette).",
+    "hj_lda": "HJ-Biplot of periods (squares, joined chronologically) and LDA topics (vectors). Colours and {shapes}: topic clusters (Ward linkage; number of clusters selected by silhouette among non-overlapping solutions).",
     "bert_words": "Top terms of the BERTopic topics (c-TF-IDF weight).",
     "bert_map": "Two-dimensional UMAP projection of document embeddings coloured by BERTopic topic; grey: outliers.",
     "bert_time": "Prevalence of BERTopic topics by period.",
-    "hj_bert": "HJ-Biplot of periods (squares, joined chronologically) and BERTopic topics (vectors). Colours and shaded hulls: topic clusters (Ward linkage, silhouette).",
+    "hj_bert": "HJ-Biplot of periods (squares, joined chronologically) and BERTopic topics (vectors). Colours and {shapes}: topic clusters (Ward linkage; number of clusters selected by silhouette among non-overlapping solutions).",
     "sim": "Cosine similarity between LDA and BERTopic topics; white boxes mark the optimal one-to-one matching.",
     "cont": "Document-level agreement: proportion of documents of each LDA dominant topic assigned to each BERTopic topic.",
     "trends": "Linear trend of the annual prevalence of each topic. Red: hot (p < 0.05, positive slope); blue: cold (p < 0.05, negative slope).",
-    "hj_country": "HJ-Biplot of the most productive countries (points, coloured by country cluster) and LDA topics (vectors, coloured by topic cluster).",
+    "hj_country": "HJ-Biplot of the most productive countries (points, coloured by country cluster) and LDA topics (vectors, coloured by topic cluster); {shapes} enclose the country clusters (Ward linkage; number of clusters selected by silhouette among non-overlapping solutions).",
     "strategic": "Strategic map of LDA topics: growth (slope) versus impact (citations per year); bubble size: prevalence.",
     "callon": "Thematic map of keyword clusters (Callon centrality and density, rank-scaled); bubble size: occurrences.",
     "sankey": "Thematic evolution of keyword clusters across periods; flow width proportional to the inclusion index.",
@@ -304,10 +324,7 @@ def build(R, path, meta, sections=None):
     stab_on = R.on("stability")
     topic = meta.get("topic_name") or "[TOPIC]"
     models = " and ".join(m for m, r in (("LDA", lda), ("BERTopic", bert)) if r is not None)
-    title = meta.get("title") or (
-        f"Mapping the scientific landscape of {topic}: bibliometrics"
-        + (f" and {'a comparative ' if lda is not None and bert is not None else ''}topic modelling "
-           f"using {models}" if models else " analysis"))
+    title = meta.get("title") or propose_titles(R, meta)[0]
     W = Writer(title)
     W.note("Borrador generado automáticamente a partir de los datos. Los textos resaltados en amarillo "
            "requieren revisión de los autores expertos en la temática (en particular, las etiquetas "
@@ -476,7 +493,10 @@ def build(R, path, meta, sections=None):
                         "prevalencia de ese tema en dicho periodo. Para identificar grupos de temas con "
                         "comportamiento similar se aplicó un análisis de conglomerados jerárquico con el método "
                         f"de Ward {cite('ward')} sobre las coordenadas de los temas en el plano factorial; el "
-                        f"número de conglomerados se eligió con el coeficiente de silueta {cite('rousseeuw')}."
+                        f"número de conglomerados se eligió con el coeficiente de silueta {cite('rousseeuw')}, entre las "
+                        "soluciones cuyos grupos no se superponen en el plano factorial; cada conglomerado se "
+                        + ("delimitó con una elipse que contiene a todos sus elementos." if cfg.get("cluster_shape") == "ellipse"
+                           else "delimitó con su envolvente convexa.")
                         + (" El mismo procedimiento se aplicó a una matriz país × tema con los países más "
                            "productivos." if "hj_country" in FIG else "")
                         + " Este enfoque se ha empleado previamente en estudios bibliométricos con LDA "
@@ -542,13 +562,14 @@ def build(R, path, meta, sections=None):
                 "principales del tema y uno de otro tema. El acuerdo entre evaluadores se estimó con el alfa de "
                 f"Krippendorff {cite('hayes')} (nivel de intervalo para las calificaciones y nominal para la "
                 "palabra intrusa).")
-        if R.ai.get("discussion") or R.ai.get("labels_used"):
+        if R.ai.get("discussion") or R.ai.get("labels_used") or meta.get("ai_title"):
             W.h(f"2.{next(s)}. Uso de inteligencia artificial", 2)
             W.p("Se utilizó un modelo de lenguaje (", (meta.get("ai_model") or "Claude", "hl"), ", Anthropic) "
                 "como asistente para "
                 + enum_es([x for x, on in (("proponer nombres para los temas a partir de sus términos y "
                                             "documentos representativos", R.ai.get("labels_used")),
-                                           ("redactar un primer borrador de la discusión", R.ai.get("discussion")))
+                                           ("redactar un primer borrador de la discusión", R.ai.get("discussion")),
+                                           ("proponer el título del artículo", meta.get("ai_title")))
                            if on])
                 + ". Todas las propuestas fueron revisadas, corregidas y aprobadas por los autores, que asumen "
                 "la responsabilidad del contenido. Las citas del borrador se restringieron a documentos del "
@@ -881,7 +902,11 @@ def build(R, path, meta, sections=None):
         def cap_of(k):
             if k == "annual" and "MeanTCperYear" in ap:
                 return "Annual scientific production and mean citations per year."
-            return FIG_CAPTIONS.get(k, "")
+            cap = FIG_CAPTIONS.get(k, "")
+            if k == "trends" and lda is not None and bert is not None:
+                cap += " Left: LDA; right: BERTopic."
+            shapes = "ellipses" if cfg.get("cluster_shape") == "ellipse" else "convex hulls"
+            return cap.replace("{shapes}", shapes)
         for k in W.fig_entries:
             if k in comps:
                 cap = " ".join(f"({chr(97 + i)}) {cap_of(pk)}" for i, pk in enumerate(comps[k]))
@@ -952,3 +977,85 @@ def _checklist(W, R, meta, FIG, T):
         "configuración completa del análisis se proporcionan como material suplementario. El código de "
         "BiblioTopic es de acceso abierto en https://github.com/CarlosSalasMacias/BiblioTopic y está archivado "
         "en Zenodo (", ("DOI: [completar]", "hl"), ").")
+
+
+# ------------------------------------------------------------------ título
+def _topic_phrase(R, meta):
+    """Tema del estudio: el indicado por el usuario; si no, la frase de la ecuación de búsqueda o las
+    palabras clave más frecuentes del corpus."""
+    import re
+    t = (meta.get("topic_name") or "").strip()
+    if t:
+        return t
+    q = meta.get("query") or ""
+    phrases = [p.strip() for p in re.findall(r'"([^"]{3,60})"', q) if p.strip()]
+    if phrases:
+        return phrases[0]
+    terms = [w for w in (R.cfg.get("query_terms") or []) if w.strip()]
+    if terms:
+        return terms[0]
+    kw = R.tables.get("T5_keywords")
+    if kw is not None and len(kw):
+        return " and ".join(str(k) for k in kw["Keyword"].values[:2])
+    return "[topic]"
+
+
+def _cap(s):
+    return s[:1].upper() + s[1:] if s else s
+
+
+def propose_titles(R, meta=None):
+    """Títulos en inglés acordes con el tema del corpus y los análisis realizados (de más a menos sobrio)."""
+    meta = meta or {}
+    topic = _topic_phrase(R, meta)
+    df, lda, bert, X = R.df, R.lda, R.bert, R.facts
+    y0 = int(df["PY"].min())
+    y1 = int(X.get("last_full_year") or df["PY"].max())
+    span = f"{y0}–{y1}"
+    years = y1 - y0 + 1
+    both = lda is not None and bert is not None
+    models = "LDA and BERTopic" if both else ("LDA" if lda is not None else "BERTopic" if bert is not None else "")
+    extras = []
+    if X.get("hj_l") is not None or X.get("hj_b") is not None:
+        extras.append("HJ-Biplot")
+    if "sankey" in R.figs or "callon" in R.figs:
+        extras.append("thematic evolution")
+    out = []
+    if both:
+        out.append(f"{_cap(topic)} research ({span}): a bibliometric analysis and comparison of LDA and "
+                   f"BERTopic topic models")
+        out.append(f"Thematic structure and evolution of {topic} research: evidence from LDA and BERTopic")
+    elif models:
+        out.append(f"{_cap(topic)} research ({span}): a bibliometric and {models} topic-modelling analysis")
+        out.append(f"Thematic structure and evolution of {topic} research: a {models} topic-modelling approach")
+    else:
+        out.append(f"{_cap(topic)} research ({span}): a bibliometric analysis")
+        out.append(f"Mapping the intellectual and social structure of {topic} research")
+    # Con nombres de temas asignados por los autores: de qué tema a qué tema ha evolucionado el campo
+    r = lda if lda is not None and getattr(lda, "custom_labels", False) else (
+        bert if bert is not None and getattr(bert, "custom_labels", False) else None)
+    tr = None if r is None else X.get("trends_lda" if r is lda else "trends_bert")
+    if tr is not None and len(tr):
+        names = [l.split(":", 1)[1].strip() if ":" in l else l for l in r.labels]
+        sl = tr["Slope"].values
+        hot = [i for i in range(len(names)) if tr["Trend"].iloc[i] == "Hot"]
+        cold = [i for i in range(len(names)) if tr["Trend"].iloc[i] == "Cold"]
+        if hot and cold:
+            h, c = max(hot, key=lambda i: sl[i]), min(cold, key=lambda i: sl[i])
+            out.append(f"From {names[c].lower()} to {names[h].lower()}: {years} years of {topic} research "
+                       f"mapped with bibliometrics and topic modelling")
+        elif hot:
+            h = max(hot, key=lambda i: sl[i])
+            out.append(f"The rise of {names[h].lower()} in {topic} research: a bibliometric and "
+                       f"topic-modelling analysis ({span})")
+    tl = ["bibliometrics"] + (["topic modelling"] if models else []) + extras[:1]
+    tools = tl[0] if len(tl) == 1 else ", ".join(tl[:-1]) + " and " + tl[-1]
+    out.append(f"Mapping {years} years of {topic} research with {tools}")
+    if X.get("hj_country") is not None:
+        out.append(f"Who studies what in {topic}? Countries, collaboration and research topics ({span})")
+    seen, res = set(), []
+    for t in out:
+        if t.lower() not in seen:
+            seen.add(t.lower())
+            res.append(t)
+    return res

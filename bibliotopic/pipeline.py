@@ -15,7 +15,7 @@ import pandas as pd
 from . import biblio, citations as CIT, compare, evolution as EVO, figures as F, io as bio
 from . import stats as ST
 from .bert_model import BERTResult
-from .hjbiplot import HJBiplot, clusters as hj_clusters, make_periods
+from .hjbiplot import HJBiplot, make_periods
 from .lda_model import LDAResult, select_k
 from .text import Corpus
 
@@ -177,6 +177,10 @@ class Session:
             if r is not None and name in labels:
                 r.labels = [f"{i}: {l}" for i, l in zip(r.ids, labels[name])]
                 r.custom_labels = True
+
+    def propose_titles(self, meta=None):
+        from .report import propose_titles
+        return propose_titles(self, meta or {})
 
     def _bip_names(self, r):
         """Nombre de los vectores en los biplots: código + nombre corto si los autores lo asignaron."""
@@ -364,7 +368,7 @@ class Session:
                                                        lda.labels, "LDA topic prevalence by period")
             if self.on("hjbiplot") and len(plabels) >= 3:
                 hj = HJBiplot(ml.rename(columns=dict(zip(lda.labels, self._bip_names(lda)))))
-                hj.col_clusters, hj.k_cols, hj.sil_cols = hj_clusters(hj.cols.iloc[:, :2].values)
+                hj.col_clusters, hj.k_cols, hj.sil_cols = F.biplot_clusters(hj)[:3]
                 FIG["hj_lda"] = F.biplot(fp("Fig11_HJBiplot_LDA_periods.png"), hj,
                                          "HJ-Biplot: LDA topics and periods", col_clusters=hj.col_clusters)
                 T["hj_lda_inertia"] = hj.summary()
@@ -387,7 +391,7 @@ class Session:
                                                         cmap="Oranges")
             if self.on("hjbiplot") and len(plabels) >= 3:
                 hj = HJBiplot(mb.rename(columns=dict(zip(bert.labels, self._bip_names(bert)))))
-                hj.col_clusters, hj.k_cols, hj.sil_cols = hj_clusters(hj.cols.iloc[:, :2].values)
+                hj.col_clusters, hj.k_cols, hj.sil_cols = F.biplot_clusters(hj)[:3]
                 FIG["hj_bert"] = F.biplot(fp("Fig15_HJBiplot_BERTopic_periods.png"), hj,
                                           "HJ-Biplot: BERTopic topics and periods",
                                           col_clusters=hj.col_clusters)
@@ -424,8 +428,8 @@ class Session:
                     for cc in topc]
             if len(topc) >= 3:
                 hjc = HJBiplot(pd.DataFrame(rows, index=topc, columns=self._bip_names(lda)))
-                hjc.col_clusters, hjc.k_cols, hjc.sil_cols = hj_clusters(hjc.cols.iloc[:, :2].values)
-                hjc.row_clusters, hjc.k_rows, hjc.sil_rows = hj_clusters(hjc.rows.iloc[:, :2].values)
+                (hjc.col_clusters, hjc.k_cols, hjc.sil_cols,
+                 hjc.row_clusters, hjc.k_rows, hjc.sil_rows) = F.biplot_clusters(hjc, rows=True)
                 FIG["hj_country"] = F.biplot(fp("Fig19_HJBiplot_countries_LDA_topics.png"), hjc,
                                              "HJ-Biplot: countries and LDA topics", row_kind="country",
                                              col_clusters=hjc.col_clusters, row_clusters=hjc.row_clusters)

@@ -278,6 +278,59 @@ $("b-ai-disc").onclick = async () => {
   }
 };
 
+// ------------------------------------------------------------------ título
+function titleMeta() {
+  return { topic_name: $("m-topic").value.trim(), query: $("m-query").value.trim() };
+}
+function showTitles(list, source) {
+  const fromAI = !!source;
+  const box = $("title-opts");
+  box.innerHTML = "";
+  list.forEach((t) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = typeof t === "string" ? t : t.title;
+    if (t.rationale) {
+      const sm = document.createElement("small");
+      sm.textContent = t.rationale;
+      b.appendChild(sm);
+    }
+    const title = typeof t === "string" ? t : t.title;
+    b.onclick = () => {
+      $("m-title").value = title;
+      state.titleAI = fromAI;
+      box.querySelectorAll("button").forEach((x) => x.classList.toggle("sel", x === b));
+    };
+    box.appendChild(b);
+  });
+  if (list.length && (!$("m-title").value.trim() || state.autoTitle)) {
+    $("m-title").value = typeof list[0] === "string" ? list[0] : list[0].title;
+    state.autoTitle = true;
+    state.titleAI = fromAI;
+    box.firstChild.classList.add("sel");
+  }
+  if (source) toast(source, 6000);
+}
+$("m-title").addEventListener("input", () => { state.autoTitle = false; });
+$("b-titles").onclick = () => worker.postMessage({ cmd: "titles", meta: titleMeta() });
+$("b-ai-titles").onclick = async () => {
+  const key = needKey();
+  if (!key) return;
+  busy(true);
+  toast("Pidiendo propuestas de título a Claude…", 15000);
+  try {
+    const ai = await import("./ai.js");
+    const ctx = await getContext();
+    const out = await ai.suggestTitles(key, ctx, titleMeta());
+    state.aiModel = ai.MODEL;
+    showTitles(out, "Títulos propuestos por la IA. Elija uno o edítelo.");
+  } catch (err) {
+    toast("IA: " + (err.message || err), 12000);
+  } finally {
+    busy(false);
+  }
+};
+
 // ------------------------------------------------------------------ redacción
 $("m-date").value = new Date().toLocaleDateString("es-ES");
 $("b-doc").onclick = () => {
@@ -289,7 +342,8 @@ $("b-doc").onclick = () => {
     cmd: "report", sections,
     meta: { topic_name: $("m-topic").value.trim(), title: $("m-title").value.trim(),
             query: $("m-query").value.trim(), search_date: $("m-date").value.trim(),
-            composite: $("m-comp").checked, ai_model: state.aiModel ? "Claude Opus 5.5" : "" },
+            composite: $("m-comp").checked, ai_model: state.aiModel ? "Claude Opus 5.5" : "",
+            ai_title: !!state.titleAI },
     opts: figOpts(),
   });
 };
@@ -343,6 +397,7 @@ worker.onmessage = ({ data: m }) => {
     case "results":
       busy(false);
       showResults(m);
+      worker.postMessage({ cmd: "titles", meta: titleMeta() });
       break;
     case "done":
       $("stage").textContent = `Análisis terminado en ${fmtTime(m.elapsed)}`;
@@ -374,6 +429,9 @@ worker.onmessage = ({ data: m }) => {
       ctxResolve = null;
       break;
     case "ai_saved":
+      break;
+    case "titles":
+      showTitles(m.titles);
       break;
     case "error":
       busy(false);

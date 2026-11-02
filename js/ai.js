@@ -101,3 +101,46 @@ Devuelve solo el texto de la Discusión (sin título principal, sin lista de ref
     messages: [{ role: "user", content: prompt }],
   }, onText);
 }
+
+const TITLE_SCHEMA = {
+  type: "object",
+  properties: {
+    titles: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { title: { type: "string" }, rationale: { type: "string" } },
+        required: ["title", "rationale"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["titles"],
+  additionalProperties: false,
+};
+
+export async function suggestTitles(apiKey, ctx, meta) {
+  const topics = Object.fromEntries(Object.entries(ctx.topics).map(([m, ts]) => [m, ts.map((t) => ({
+    id: t.id, label: t.label, terms: t.terms.slice(0, 8), prevalence_pct: t.prevalence_pct,
+  }))]));
+  const prompt = `You are a senior editor of a Q1 journal. Propose 5 English titles for a research article based on the analysis below.
+Study topic: ${meta.topic_name || "(not given; infer it from the topics)"}.
+Search query: ${meta.query || "(not given)"}.
+The article is a bibliometric analysis of a Web of Science/Scopus corpus with topic modelling (the models used appear in the results).
+
+Requirements:
+- Specific to the subject of the corpus and to its main findings (dominant, emerging or declining themes), not generic.
+- Mention the methods only when they add value; vary the style (descriptive, finding-oriented, question).
+- 10-20 words each, no abbreviations except LDA, BERTopic or HJ-Biplot, sentence case.
+- Do not claim findings that are not in the results.
+- For each title, give a one-sentence rationale in Spanish.
+
+RESULTS (JSON):
+${JSON.stringify({ topics, summary: ctx.summary }, null, 1)}`;
+  const text = await run(apiKey, {
+    max_tokens: 4000,
+    output_config: { effort: "medium", format: { type: "json_schema", schema: TITLE_SCHEMA } },
+    messages: [{ role: "user", content: prompt }],
+  });
+  return JSON.parse(text).titles;
+}
