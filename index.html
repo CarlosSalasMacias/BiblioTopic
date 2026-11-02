@@ -21,90 +21,9 @@
   <p class="privacy">Todo se ejecuta en su navegador: los archivos no se suben a ningún servidor.
     La primera vez la carga tarda 1–2 minutos.</p>
 
-  <!-- 1. TEMA Y ESTRATEGIA DE BÚSQUEDA -->
-  <section class="card" id="s-topic">
-    <h2><span class="n">1</span> Tema de investigación y estrategia de búsqueda</h2>
-    <label class="field">Describa el tema de investigación (en español o en inglés)
-      <textarea id="st-topic" rows="2" placeholder="p. ej.: manejo de la roya del café (Hemileia vastatrix) en América Latina"></textarea></label>
-    <details class="keybox">
-      <summary>Clave de API de Anthropic (opcional: análisis del tema y propuestas con IA)</summary>
-      <p class="hint">Con su clave, Claude analiza el tema y propone conceptos, sinónimos, exclusiones razonadas y
-        categorías temáticas; también podrá proponer nombres de temas, títulos y un borrador de la Discusión.
-        Se envía el texto del tema y, más adelante, resultados resumidos (nunca los archivos completos).
-        La clave solo se usa en esta pestaña y no se guarda. Sin clave, la aplicación genera una propuesta básica
-        que usted completa.</p>
-      <input type="password" id="ai-key" autocomplete="off" placeholder="sk-ant-…">
-    </details>
-    <div class="row">
-      <button id="st-next" class="primary">Siguiente</button>
-      <label class="btnlike">Abrir proyecto guardado
-        <input type="file" id="f-project" accept=".bibliotopic" hidden disabled></label>
-    </div>
-
-    <div id="st-step2" hidden>
-      <div class="grid">
-        <label class="wide">Tema en inglés (se usa en el título y en el texto)
-          <input type="text" id="st-topic-en"></label>
-      </div>
-      <p id="st-notes" class="warn" hidden></p>
-
-      <h3>Conceptos y términos de búsqueda</h3>
-      <p class="hint">Cada concepto es un bloque de sinónimos unidos con <b>OR</b>; los bloques se combinan con
-        <b>AND</b>. El asterisco (*) trunca la palabra (p. ej., <code>manag*</code> recupera management, managing…).
-        Desmarque, edite o elimine términos y añada los que falten (en inglés).</p>
-      <div id="st-concepts"></div>
-      <button type="button" id="st-add-concept">+ Añadir concepto</button>
-
-      <h3>Términos de exclusión (NOT)</h3>
-      <p class="hint">Sugerencias para reducir documentos ajenos al tema. Acepte o descarte cada término o grupo.
-        Los marcados con ⚠ también podrían aparecer en estudios pertinentes y empiezan desmarcados.</p>
-      <div id="st-excl"></div>
-      <div class="row inline">
-        <input type="text" id="st-new-excl" placeholder="Añadir términos de exclusión (separe con coma)">
-        <button type="button" id="st-add-excl">Añadir</button>
-      </div>
-      <label class="field">Aplicar las exclusiones a
-        <select id="st-exfield">
-          <option value="title">Solo el título (más conservador: evita perder estudios pertinentes)</option>
-          <option value="tak">Título, resumen y palabras clave (más restrictivo)</option>
-        </select></label>
-
-      <h3>Filtros temáticos (opcionales)</h3>
-      <p class="hint">Limitar a áreas o categorías aumenta la precisión pero puede perder estudios pertinentes
-        publicados en otras disciplinas. Úselos con moderación.</p>
-      <div id="st-filters" class="filters">
-        <div><h4>Scopus · áreas temáticas (SUBJAREA)</h4><div id="st-scopus-f"></div>
-          <select id="st-add-scopus"></select></div>
-        <div><h4>Web of Science · categorías (WC)</h4><div id="st-wos-f"></div>
-          <button type="button" id="st-add-wos">+ Añadir categoría</button></div>
-      </div>
-
-      <h3>Revisión de la lista definitiva</h3>
-      <div id="st-review" class="review"></div>
-      <button type="button" id="st-gen" class="primary">Generar ecuaciones</button>
-
-      <div id="st-queries" hidden>
-        <h3>Ecuaciones de búsqueda</h3>
-        <p class="hint">Puede editarlas. Péguelas en la búsqueda avanzada de cada base de datos.</p>
-        <label class="field"><b>Scopus</b> (Advanced document search)
-          <textarea id="st-q-scopus" rows="6" class="mono"></textarea></label>
-        <div class="row inline"><button type="button" id="st-copy-scopus">Copiar</button><span id="st-chk-scopus" class="chk"></span></div>
-        <label class="field"><b>Web of Science Core Collection</b> (Advanced search)
-          <textarea id="st-q-wos" rows="6" class="mono"></textarea></label>
-        <div class="row inline"><button type="button" id="st-copy-wos">Copiar</button><span id="st-chk-wos" class="chk"></span></div>
-        <button type="button" id="st-export">Exportar estrategia (.txt)</button>
-      </div>
-      <div id="st-approve-box" class="approve" hidden>
-        <label><input type="checkbox" id="st-ok-scopus"> He revisado y apruebo la estrategia de <b>Scopus</b></label>
-        <label><input type="checkbox" id="st-ok-wos"> He revisado y apruebo la estrategia de <b>Web of Science</b></label>
-        <button type="button" id="st-continue" class="primary" disabled>Aprobar y continuar a la carga del corpus</button>
-      </div>
-    </div>
-  </section>
-
-  <!-- 2. DATOS -->
-  <section class="card" id="s-data" hidden>
-    <h2><span class="n">2</span> Cargar el corpus</h2>
+  <!-- 1. DATOS -->
+  <section class="card" id="s-data">
+    <h2><span class="n">1</span> Cargar el corpus</h2>
     <div class="uploads">
       <label class="drop" id="drop-scopus">
         <input type="file" id="f-scopus" accept=".csv,.zip" multiple disabled>
@@ -121,16 +40,17 @@
     </div>
     <p class="hint">WoS: <em>Export → Tab delimited file</em>, contenido <em>Full Record and Cited References</em>.
       Scopus: <em>Export → CSV</em> con todos los campos.</p>
-    <p class="hint">Exporte los resultados de las ecuaciones aprobadas en el paso 1.</p>
     <div class="row">
       <button id="b-load" class="primary" disabled>Cargar y fusionar</button>
+      <label class="btnlike">Abrir proyecto guardado
+        <input type="file" id="f-project" accept=".bibliotopic" hidden disabled></label>
     </div>
     <div id="summary" hidden></div>
   </section>
 
-  <!-- 3. ANÁLISIS -->
+  <!-- 2. ANÁLISIS -->
   <section class="card" id="s-analyses" hidden>
-    <h2><span class="n">3</span> Análisis a realizar</h2>
+    <h2><span class="n">2</span> Análisis a realizar</h2>
     <div id="analyses" class="checks"></div>
     <details>
       <summary>Opciones avanzadas</summary>
@@ -171,9 +91,9 @@
     </div>
   </section>
 
-  <!-- 4. RESULTADOS -->
+  <!-- 3. RESULTADOS -->
   <section class="card" id="s-results" hidden>
-    <h2><span class="n">4</span> Resultados</h2>
+    <h2><span class="n">3</span> Resultados</h2>
     <div id="tables"></div>
     <div id="labels-box" hidden>
       <h3>Nombre de los temas (en inglés)</h3>
@@ -199,9 +119,9 @@
     <div id="gallery" class="gallery"></div>
   </section>
 
-  <!-- 5. REDACCIÓN -->
+  <!-- 4. REDACCIÓN -->
   <section class="card" id="s-write" hidden>
-    <h2><span class="n">5</span> Redacción del documento</h2>
+    <h2><span class="n">4</span> Redacción del documento</h2>
     <div class="grid">
       <label class="wide">Tema del estudio (en inglés) <input type="text" id="m-topic" placeholder="p. ej.: Coffea arabica"></label>
       <div class="wide">
@@ -213,7 +133,7 @@
         </div>
         <div id="title-opts" class="title-opts"></div>
       </div>
-      <label class="wide">Ecuaciones de búsqueda (del paso 1) <textarea id="m-query" rows="3"></textarea></label>
+      <label class="wide">Ecuación de búsqueda <textarea id="m-query" rows="2"></textarea></label>
       <label>Fecha de la búsqueda <input type="text" id="m-date"></label>
     </div>
     <p><strong>Apartados a redactar</strong> <span class="hint">(texto en español; título, figuras y tablas en inglés)</span></p>
@@ -225,9 +145,12 @@
     </div>
     <details id="ai-box">
       <summary>Asistencia con IA (opcional)</summary>
-      <p class="hint">Usa Claude (Anthropic) con la clave de API indicada en el paso 1 para redactar un borrador de la
-        Discusión que solo cita documentos del corpus. Se envían los términos, títulos y resultados resumidos
-        (no los archivos completos).</p>
+      <p class="hint">Usa Claude (Anthropic) con su propia clave de API para proponer nombres de temas y redactar un
+        borrador de la Discusión que solo cita documentos del corpus. Se envían los términos, títulos y resultados
+        resumidos (no los archivos completos). La clave solo se usa en esta pestaña y no se guarda.</p>
+      <div class="grid">
+        <label class="wide">Clave de API de Anthropic <input type="password" id="ai-key" autocomplete="off" placeholder="sk-ant-…"></label>
+      </div>
       <div class="row">
         <button id="b-ai-disc" class="ai">Redactar borrador de la Discusión</button>
       </div>

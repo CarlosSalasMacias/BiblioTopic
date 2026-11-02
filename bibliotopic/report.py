@@ -177,17 +177,6 @@ class Writer:
     def T(self, k):
         return f"Tabla {self.tab_no[k]}"
 
-    def equation(self, label, text):
-        """Ecuación de búsqueda en un párrafo propio, en fuente monoespaciada."""
-        p = self.doc.add_paragraph()
-        p.paragraph_format.left_indent = Cm(0.75)
-        r = p.add_run(f"{label}: ")
-        r.bold = True
-        r.font.size = Pt(10)
-        r = p.add_run(" ".join(text.split()))
-        r.font.name = "Courier New"
-        r.font.size = Pt(9)
-
     def figure(self, key, path, caption, width=15.5):
         self.doc.add_picture(path, width=Cm(width))
         self.doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -378,52 +367,11 @@ def build(R, path, meta, sections=None):
         W.h(f"2.{next(s)}. Fuente de datos y estrategia de búsqueda", 2)
         q = meta.get("query") or "[ecuación de búsqueda]"
         date = meta.get("search_date") or "[fecha]"
-        stg = getattr(R, "strategy", None) or None
-        n_exp = "; ".join(f"{k}: {f(v, 0)} registros" for k, v in by_db.items())
-        if stg and (stg.get("query_scopus") or stg.get("query_wos")):
-            conc = [c for c in stg.get("concepts", []) if any(t.get("on") and t.get("term", "").strip()
-                                                               for t in c.get("terms", []))]
-            n_terms = sum(sum(1 for t in c["terms"] if t.get("on") and t.get("term", "").strip()) for c in conc)
-            exc = [dict(t, group=g["group"]) for g in stg.get("exclusions", []) for t in g.get("terms", [])
-                   if t.get("on") and t.get("term", "").strip()]
-            groups = [g.lower() for g in dict.fromkeys(t["group"] for t in exc) if g != "Términos personalizados"]
-            if any(t["group"] == "Términos personalizados" for t in exc):
-                groups.append("otros términos definidos por los autores")
-            field = "al título" if stg.get("exclField") == "title" else "al título, el resumen y las palabras clave"
-            sc = [a for a in stg.get("scopus", []) if a.get("on")]
-            wc = [c for c in stg.get("wos", []) if c.get("on") and c.get("name", "").strip()]
-            txt = (f"La estrategia de búsqueda se construyó a partir de {pl(len(conc), 'concepto principal', 'conceptos principales')} "
-                   f"del tema ({enum_es([c['name'] for c in conc])}). Para cada concepto se reunieron sinónimos, "
-                   f"variantes ortográficas y terminológicas y formas truncadas en inglés ({f(n_terms, 0)} términos en "
-                   "total), que se combinaron con el operador OR dentro de cada concepto y con AND entre conceptos.")
-            if exc:
-                txt += (f" Para reducir la recuperación de documentos ajenos al objeto de estudio se excluyeron "
-                        f"(operador NOT) {pl(len(exc), 'término', 'términos')} referidos a {enum_es(groups)}, "
-                        f"aplicados {field}; cada término se revisó individualmente para no descartar estudios "
-                        "pertinentes.")
-            if sc or wc:
-                parts = []
-                if sc:
-                    parts.append("en Scopus, " + enum_es([("restringiendo al área" if a["mode"] == "include" else "excluyendo el área")
-                                                          + f" {a['code']}" for a in sc]))
-                if wc:
-                    parts.append("en Web of Science, " + enum_es([("restringiendo a la categoría" if c["mode"] == "include" else "excluyendo la categoría")
-                                                                  + f" «{c['name']}»" for c in wc]))
-                txt += " Se aplicaron filtros temáticos: " + "; ".join(parts) + "."
-            W.p(f"La información se obtuvo de {dbs_txt}, bases de datos de referencia para estudios "
-                "bibliométricos por su cobertura multidisciplinar y la calidad de sus metadatos. " + txt
-                + " Las búsquedas se realizaron el ", (date, "hl"), " en los campos de título, resumen y palabras "
-                "clave (TITLE-ABS-KEY en Scopus y TS en Web of Science Core Collection) con las ecuaciones "
-                "siguientes, y los registros se exportaron con todos sus campos disponibles (" + n_exp + ").")
-            for db, key, code in (("Scopus", "query_scopus", "Scopus"), ("Web of Science", "query_wos", "WoS")):
-                if stg.get(key) and (code in by_db or not by_db):
-                    W.equation(db, stg[key])
-        else:
-            W.p(f"La información se obtuvo de {dbs_txt}, bases de datos de referencia para estudios "
-                "bibliométricos por su cobertura multidisciplinar y la calidad de sus metadatos. La búsqueda se "
-                "realizó el ", (date, "hl"), " mediante la siguiente ecuación booleana aplicada a título, resumen "
-                "y palabras clave: ", (q, "hl"), ". Los registros se exportaron con todos sus campos disponibles ("
-                + n_exp + ").")
+        W.p(f"La información se obtuvo de {dbs_txt}, bases de datos de referencia para estudios "
+            "bibliométricos por su cobertura multidisciplinar y la calidad de sus metadatos. La búsqueda se "
+            "realizó el ", (date, "hl"), " mediante la siguiente ecuación booleana aplicada a título, resumen "
+            "y palabras clave: ", (q, "hl"), ". Los registros se exportaron con todos sus campos disponibles ("
+            + "; ".join(f"{k}: {f(v, 0)} registros" for k, v in by_db.items()) + ").")
 
         W.h(f"2.{next(s)}. Depuración y fusión del corpus", 2)
         es = {"Other document types": "otros tipos de documento", "Other languages": "otros idiomas",
@@ -616,16 +564,14 @@ def build(R, path, meta, sections=None):
                 "principales del tema y uno de otro tema. El acuerdo entre evaluadores se estimó con el alfa de "
                 f"Krippendorff {cite('hayes')} (nivel de intervalo para las calificaciones y nominal para la "
                 "palabra intrusa).")
-        if R.ai.get("discussion") or R.ai.get("labels_used") or meta.get("ai_title") or meta.get("ai_strategy"):
+        if R.ai.get("discussion") or R.ai.get("labels_used") or meta.get("ai_title"):
             W.h(f"2.{next(s)}. Uso de inteligencia artificial", 2)
             W.p("Se utilizó un modelo de lenguaje (", (meta.get("ai_model") or "Claude", "hl"), ", Anthropic) "
                 "como asistente para "
                 + enum_es([x for x, on in (("proponer nombres para los temas a partir de sus términos y "
                                             "documentos representativos", R.ai.get("labels_used")),
                                            ("redactar un primer borrador de la discusión", R.ai.get("discussion")),
-                                           ("proponer el título del artículo", meta.get("ai_title")),
-                                           ("proponer los conceptos, sinónimos y términos de exclusión de la "
-                                            "estrategia de búsqueda", meta.get("ai_strategy")))
+                                           ("proponer el título del artículo", meta.get("ai_title")))
                            if on])
                 + ". Todas las propuestas fueron revisadas, corregidas y aprobadas por los autores, que asumen "
                 "la responsabilidad del contenido."
@@ -998,7 +944,7 @@ def _checklist(W, R, meta, FIG, T):
     W.h("Material para el envío", 1)
     W.note("[Lista orientativa basada en BIBLIO (Montazeri et al., 2023) y PRISMA 2020. Verifique cada ítem "
            "con la versión oficial de la guía y con las instrucciones de la revista.]")
-    q = bool(meta.get("query")) or bool((getattr(R, "strategy", None) or {}).get("query_scopus"))
+    q = bool(meta.get("query"))
     d = bool(meta.get("search_date"))
     items = [
         ("Title identifies the study as a bibliometric / topic-modelling analysis", "Title", True),
