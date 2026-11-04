@@ -296,6 +296,10 @@ self.onmessage = async (ev) => {
     else if (cmd === "script") await scriptPackage(ev.data.meta);
     else if (cmd === "titles") await proposeTitles(ev.data.meta);
   } catch (e) {
-    post("error", { msg: String(e.message || e) });
+    // De un error de Python se muestra solo el mensaje final (p. ej., «ValueError: …»), no la traza completa
+    let msg = String(e.message || e);
+    const m = msg.match(/(?:ValueError|KeyError|RuntimeError): ([^\n]+)\s*$/);
+    if (m) msg = m[1].replace(/^'|'$/g, "");
+    post("error", { msg });
   }
 };

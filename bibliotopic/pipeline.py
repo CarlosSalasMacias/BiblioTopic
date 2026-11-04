@@ -213,8 +213,12 @@ class Session:
         return build_sheet(self, seed=self.cfg["seed"])
 
     def load_validation(self, files):
-        from .validation import analyse
-        self.validation = analyse(files)
+        from .validation import analyse, answer_key
+        try:
+            key = answer_key(self, seed=self.cfg["seed"])
+        except Exception:
+            key = None
+        self.validation = analyse(files, key)
         v = self.validation
         return {"raters": v["raters"], "alpha": {k: (None if np.isnan(x) else round(x, 3))
                                                    for k, x in v["alpha"].items()},

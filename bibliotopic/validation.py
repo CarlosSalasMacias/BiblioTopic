@@ -21,11 +21,9 @@ def _representative(theta_col, titles, n=3):
     return [titles[i] for i in idx]
 
 
-def build_sheet(session, n_docs=3, seed=42) -> bytes:
-    from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Font, PatternFill
-    from openpyxl.worksheet.datavalidation import DataValidation
-
+def _items(session, n_docs=3, seed=42):
+    """Ítems de la hoja (temas en orden aleatorio, palabra intrusa). Es determinista: con la misma sesión y
+    semilla se obtienen siempre los mismos códigos, lo que permite recuperar la clave sin la hoja oculta."""
     rng = random.Random(seed)
     titles = session.df["TI"].tolist()
     items = []
@@ -47,7 +45,20 @@ def build_sheet(session, n_docs=3, seed=42) -> bytes:
     rng.shuffle(items)
     for i, it in enumerate(items):
         it["code"] = f"T{i + 1:02d}"
+    return items
 
+
+def answer_key(session, n_docs=3, seed=42) -> pd.DataFrame:
+    return pd.DataFrame([{"code": it["code"], "model": it["model"], "topic": it["topic"],
+                          "intruder": it["intruder"], "terms": it["terms"]} for it in _items(session, n_docs, seed)])
+
+
+def build_sheet(session, n_docs=3, seed=42) -> bytes:
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.worksheet.datavalidation import DataValidation
+
+    items = _items(session, n_docs, seed)
     wb = Workbook()
     ws = wb.active
     ws.title = "Instructions"
@@ -115,26 +126,75 @@ def build_sheet(session, n_docs=3, seed=42) -> bytes:
     return buf.getvalue()
 
 
-def read_sheets(files):
-    """files: [(nombre, bytes)] -> (calificaciones largas, intrusos largos, clave)."""
+def _sheet(wb, name, fname):
+    """Hoja por nombre sin distinguir mayúsculas (algunos programas cambian el nombre al guardar)."""
+    for ws in wb.worksheets:
+        if ws.title.strip().lower() == name.lower():
+            return ws
+    raise ValueError(f"El archivo «{fname}» no tiene la hoja «{name}». Use la hoja de validación descargada "
+                     "de la aplicación sin cambiar el nombre de sus pestañas.")
+
+
+def _norm(s):
+    return " ".join(str(s or "").lower().split())
+
+
+def read_sheets(files, key=None):
+    """files: [(nombre, bytes)] -> (calificaciones largas, intrusos largos, clave).
+    La clave se toma de la hoja oculta «_key» si se conservó; si no (p. ej., el archivo se abrió y guardó en
+    Google Sheets o se copió a un libro nuevo), se usa la clave del análisis actual, comprobando que la hoja
+    corresponda a ese análisis."""
     from openpyxl import load_workbook
-    ratings, intr, key = [], [], None
+    ratings, intr, used_key = [], [], None
     for i, (name, raw) in enumerate(files):
-        wb = load_workbook(io.BytesIO(raw), data_only=True)
-        rater = str(wb["Instructions"]["B3"].value or f"Rater {i + 1}").strip()
-        k = pd.DataFrame(list(wb[KEY_SHEET].values)[1:], columns=["code", "model", "topic", "intruder"])
-        key = k if key is None else key
-        for row in list(wb["Ratings"].values)[1:]:
+        try:
+            wb = load_workbook(io.BytesIO(raw), data_only=True)
+        except Exception:
+            raise ValueError(f"No se pudo leer «{name}». Guárdelo en formato Excel (.xlsx) e inténtelo de nuevo.")
+        try:
+            rater = str(_sheet(wb, "Instructions", name)["B3"].value or "").strip()
+        except ValueError:
+            rater = ""
+        rater = rater or name.rsplit(".", 1)[0]
+        wr, wi = _sheet(wb, "Ratings", name), _sheet(wb, "Word intrusion", name)
+        rows = [r for r in list(wr.values)[1:] if r and r[0]]
+        file_key = None
+        hidden = [ws for ws in wb.worksheets if ws.title == KEY_SHEET]
+        if hidden:
+            vals = [r[:4] for r in list(hidden[0].values)[1:] if r and r[0]]
+            file_key = pd.DataFrame(vals, columns=["code", "model", "topic", "intruder"])
+        elif key is not None:
+            # comprobar que los términos de la hoja coinciden con los del análisis actual
+            terms = dict(zip(key["code"], key["terms"].map(_norm)))
+            bad = [r[0] for r in rows if r[0] in terms and _norm(r[1]) != terms[r[0]]]
+            unknown = [r[0] for r in rows if r[0] not in terms]
+            if bad or unknown:
+                raise ValueError(f"La hoja «{name}» no corresponde al análisis abierto (los temas no coinciden). "
+                                 "Abra el proyecto con el que se generó la hoja de validación.")
+            file_key = key[["code", "model", "topic", "intruder"]]
+        else:
+            raise ValueError(f"La hoja «{name}» perdió la clave interna y no hay un análisis abierto para "
+                             "recuperarla. Abra el proyecto con el que se generó la hoja.")
+        used_key = file_key if used_key is None else used_key
+        for row in rows:
+            ratings.append({"rater": rater, "code": row[0], "interpretability": row[3] if len(row) > 3 else None,
+                            "coherence": row[4] if len(row) > 4 else None, "label": row[5] if len(row) > 5 else None})
+        for row in list(wi.values)[1:]:
             if row and row[0]:
-                ratings.append({"rater": rater, "code": row[0], "interpretability": row[3],
-                                "coherence": row[4], "label": row[5]})
-        for row in list(wb["Word intrusion"].values)[1:]:
-            if row and row[0]:
-                intr.append({"rater": rater, "code": row[0], "choice": row[7]})
+                intr.append({"rater": rater, "code": row[0], "choice": row[7] if len(row) > 7 else None})
+    if not ratings:
+        raise ValueError("Las hojas cargadas no tienen calificaciones.")
     r = pd.DataFrame(ratings)
     for c in ("interpretability", "coherence"):
         r[c] = pd.to_numeric(r[c], errors="coerce")
-    return r, pd.DataFrame(intr), key
+    if r[["interpretability", "coherence"]].notna().sum().sum() == 0:
+        raise ValueError("Las hojas cargadas no tienen calificaciones de 1 a 5 (columnas D y E de «Ratings»).")
+    raters = r["rater"].value_counts()
+    if (raters > len(used_key)).any():
+        dup = ", ".join(raters[raters > len(used_key)].index)
+        raise ValueError(f"Hay varias hojas con el mismo nombre de evaluador ({dup}). Escriba un nombre distinto "
+                         "en la celda B3 de «Instructions» de cada hoja.")
+    return r, pd.DataFrame(intr, columns=["rater", "code", "choice"]), used_key
 
 
 def krippendorff_alpha(data, level="interval"):
@@ -159,9 +219,9 @@ def krippendorff_alpha(data, level="interval"):
     return float(1 - do / de) if de > 0 else np.nan
 
 
-def analyse(files):
+def analyse(files, key=None):
     from .stats import compare_topics, mean_ci
-    r, wi, key = read_sheets(files)
+    r, wi, key = read_sheets(files, key)
     raters = sorted(r["rater"].unique())
     codes = list(key["code"])
     out = {"raters": raters, "n_raters": len(raters)}
