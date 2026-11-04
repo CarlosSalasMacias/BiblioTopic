@@ -50,6 +50,9 @@ Se recomienda Chrome o Edge actualizados y una computadora con al menos 8 GB de 
 - Figuras a doble columna (175 mm) en TIFF 600 dpi, PNG 300 dpi y PDF vectorial, con figuras compuestas
   con paneles (a), (b), (c).
 - Todas las tablas en Excel.
+- **Script del análisis** (.zip): el código en Python, la configuración exacta (parámetros, semilla, nombres de los
+  temas), las versiones de las librerías e instrucciones para reproducir el análisis fuera del navegador. Se
+  descarga con su propio botón y también va dentro del .zip de resultados, listo para el material suplementario.
 
 ## Uso
 

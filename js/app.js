@@ -37,7 +37,7 @@ const csv = (s) => s.split(",").map((x) => x.trim()).filter(Boolean);
 function busy(on) {
   state.busy = on;
   for (const id of ["b-load", "b-run", "b-labels", "b-doc", "b-zip", "b-save", "b-val-sheet", "b-ai-labels",
-    "b-ai-disc"]) $(id).disabled = on;
+    "b-ai-disc", "b-script"]) $(id).disabled = on;
 }
 
 // ------------------------------------------------------------------ archivos
@@ -338,17 +338,17 @@ $("b-doc").onclick = () => {
   if (!sections.length) return toast("Seleccione al menos un apartado.");
   busy(true);
   toast("Redactando el documento…");
-  worker.postMessage({
-    cmd: "report", sections,
-    meta: { topic_name: $("m-topic").value.trim(), title: $("m-title").value.trim(),
-            query: $("m-query").value.trim(), search_date: $("m-date").value.trim(),
-            composite: $("m-comp").checked, ai_model: state.aiModel ? "Claude Opus 5.5" : "",
-            ai_title: !!state.titleAI },
-    opts: figOpts(),
-  });
+  worker.postMessage({ cmd: "report", sections, meta: docMeta(), opts: figOpts() });
 };
+function docMeta() {
+  return { topic_name: $("m-topic").value.trim(), title: $("m-title").value.trim(),
+    query: $("m-query").value.trim(), search_date: $("m-date").value.trim(),
+    composite: $("m-comp").checked, ai_model: state.aiModel ? "Claude Opus 5.5" : "",
+    ai_title: !!state.titleAI, sections: checked("sections") };
+}
 const figOpts = () => ({ composite: $("m-comp").checked, export_tiff: $("m-tiff").checked });
-$("b-zip").onclick = () => { busy(true); worker.postMessage({ cmd: "zip", opts: figOpts() }); };
+$("b-zip").onclick = () => { busy(true); worker.postMessage({ cmd: "zip", opts: figOpts(), meta: docMeta() }); };
+$("b-script").onclick = () => { busy(true); worker.postMessage({ cmd: "script", meta: docMeta() }); };
 
 function download(name, data, mime) {
   const url = URL.createObjectURL(new Blob([data], { type: mime }));

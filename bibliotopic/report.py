@@ -583,7 +583,8 @@ def build(R, path, meta, sections=None):
         W.p("Todos los análisis se realizaron con la aplicación web BiblioTopic, que ejecuta Python "
             f"{v.get('python')} en el navegador (Pyodide) con pandas {v.get('pandas')}, scikit-learn "
             f"{v.get('scikit-learn')}, SciPy {v.get('scipy')}, networkx {v.get('networkx')} y matplotlib "
-            f"{v.get('matplotlib')}. Se fijó la semilla aleatoria {cfg['seed']}. La configuración completa, las "
+            f"{v.get('matplotlib')}. Se fijó la semilla aleatoria {cfg['seed']}. El script de Python que reproduce "
+            "el análisis, con su configuración completa (parámetros, semilla y nombres de los temas), las "
             "tablas intermedias y la asignación de temas por documento se proporcionan como material "
             "suplementario. El código de BiblioTopic está disponible en ",
             ("https://github.com/CarlosSalasMacias/BiblioTopic (DOI de Zenodo: [completar])", "hl"), ".")
@@ -976,8 +977,8 @@ def _checklist(W, R, meta, FIG, T):
     dbs = " y ".join(R.merge_stats["records_by_db"])
     W.p(f"Los registros bibliográficos se obtuvieron de {dbs} y están sujetos a las condiciones de licencia de "
         "dichas bases, por lo que no pueden redistribuirse; la ecuación de búsqueda, los identificadores de los "
-        "documentos (DOI/UT/EID), la asignación de temas por documento, las tablas intermedias y la "
-        "configuración completa del análisis se proporcionan como material suplementario. El código de "
+        "documentos (DOI/UT/EID), la asignación de temas por documento, las tablas intermedias y el script de "
+        "Python con la configuración completa del análisis se proporcionan como material suplementario. El código de "
         "BiblioTopic es de acceso abierto en https://github.com/CarlosSalasMacias/BiblioTopic y está archivado "
         "en Zenodo (", ("DOI: [completar]", "hl"), ").")
 

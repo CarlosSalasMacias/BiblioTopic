@@ -97,6 +97,7 @@ class Session:
             return {"ok": False, "errors": errors}
         self.merged, self.merge_stats = bio.merge(self.frames)
         self.merge_stats["formats"] = fmts
+        self.input_files = [name for name, _ in files]
         self.availability = bio.field_availability(self.merged)
         m = self.merged
         yrs = m["PY"].dropna().astype(int)
@@ -533,10 +534,19 @@ class Session:
         t = self.tables.get(name)
         return None if t is None else json.loads(t.head(n).to_json(orient="split", force_ascii=False))
 
-    def zip_outputs(self, out_dir="/out"):
+    def script_package(self, meta=None) -> bytes:
+        """Código y configuración exacta del análisis (material suplementario)."""
+        from .script_export import build_package
+        return build_package(self, meta)
+
+    def zip_outputs(self, out_dir="/out", meta=None):
         buf = _io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
             for p in Path(out_dir).rglob("*"):
                 if p.is_file():
                     z.write(p, p.relative_to(out_dir))
+            # el script del análisis también va dentro del .zip de resultados
+            with zipfile.ZipFile(_io.BytesIO(self.script_package(meta))) as sz:
+                for n in sz.namelist():
+                    z.writestr(n, sz.read(n))
         return buf.getvalue()

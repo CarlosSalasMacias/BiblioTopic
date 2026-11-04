@@ -4,7 +4,7 @@ import { UMAP } from "https://cdn.jsdelivr.net/npm/umap-js@1.4.0/+esm";
 
 const PY_FILES = ["__init__.py", "io.py", "biblio.py", "text.py", "lda_model.py", "bert_model.py",
   "hjbiplot.py", "compare.py", "figures.py", "report.py", "pipeline.py", "stats.py", "validation.py",
-  "citations.py", "evolution.py"];
+  "citations.py", "evolution.py", "script_export.py"];
 const EMB_MODEL = "Xenova/all-MiniLM-L6-v2";
 const TRANSFORMERS_URL = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.1";
 
@@ -263,10 +263,16 @@ async function proposeTitles(meta) {
   post("titles", { titles: JSON.parse(out) });
 }
 
-async function zipAll(opts) {
+async function scriptPackage(meta) {
+  await callPy("_b = S.script_package(json.loads(_meta))", { _meta: JSON.stringify(meta || {}) });
+  await bytesOut("_b", "BiblioTopic_script.zip", "application/zip");
+}
+
+async function zipAll(opts, meta) {
   await applyFigOpts(opts);
   await finalRender();
-  const b = await py.runPythonAsync("S.zip_outputs('/out')");
+  py.globals.set("_meta", JSON.stringify(meta || {}));
+  const b = await py.runPythonAsync("S.zip_outputs('/out', json.loads(_meta))");
   const data = b.toJs();
   b.destroy();
   post("file", { name: "BiblioTopic_resultados.zip", data, mime: "application/zip" }, [data.buffer]);
@@ -286,7 +292,8 @@ self.onmessage = async (ev) => {
     else if (cmd === "ai_context") await aiContext();
     else if (cmd === "ai_set") await aiSet(ev.data.texts);
     else if (cmd === "report") await buildReport(ev.data.meta, ev.data.sections, ev.data.opts);
-    else if (cmd === "zip") await zipAll(ev.data.opts);
+    else if (cmd === "zip") await zipAll(ev.data.opts, ev.data.meta);
+    else if (cmd === "script") await scriptPackage(ev.data.meta);
     else if (cmd === "titles") await proposeTitles(ev.data.meta);
   } catch (e) {
     post("error", { msg: String(e.message || e) });
