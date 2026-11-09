@@ -8,6 +8,7 @@ Diseño (ciego respecto al modelo):
 from __future__ import annotations
 
 import io
+import re
 import random
 
 import numpy as np
@@ -259,4 +260,32 @@ def analyse(files, key=None):
     labels = (r.merge(key, on="code").dropna(subset=["label"]).groupby(["model", "topic"])["label"]
               .apply(lambda s: " | ".join(str(x) for x in s)).reset_index())
     out["labels"] = labels
+    out["suggestions"] = suggestions(r, key)
+    return out
+
+
+_ES = re.compile(r"[áéíóúñ¿¡]|\b(de|del|la|las|los|el|y|en|para|por|con|sobre|entre|su|sus|una?|cultivos?|manejo|"
+                 r"calidad|estudios?|efectos?|producci[oó]n|enfermedad(es)?|suelos?|agua|plantas?|caf[eé])\b", re.I)
+
+
+def looks_spanish(text) -> bool:
+    """Heurística: acentos, ñ o palabras funcionales frecuentes del español."""
+    return bool(_ES.search(str(text or "")))
+
+
+def suggestions(r, key):
+    """Nombre de consenso por tema (el más propuesto; si empatan, el del primer evaluador) y alternativas."""
+    d = r.merge(key, on="code").dropna(subset=["label"])
+    d = d[d["label"].astype(str).str.strip() != ""]
+    out = {}
+    for (model, topic), g in d.groupby(["model", "topic"], sort=False):
+        labs = [" ".join(str(x).split()) for x in g["label"]]
+        counts = {}
+        for lab in labs:
+            counts.setdefault(lab.lower(), []).append(lab)
+        best = max(counts.values(), key=len)[0]
+        alts = list(dict.fromkeys(labs))
+        out.setdefault(model, {})[topic] = {"best": best, "all": alts, "n": len(labs),
+                                            "agree": len(max(counts.values(), key=len)),
+                                            "spanish": any(looks_spanish(x) for x in alts)}
     return out

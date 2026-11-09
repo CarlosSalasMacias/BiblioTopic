@@ -144,3 +144,19 @@ ${JSON.stringify({ topics, summary: ctx.summary }, null, 1)}`;
   });
   return JSON.parse(text).titles;
 }
+
+export async function translateLabels(apiKey, labels, field) {
+  const prompt = `Translate these topic labels from a bibliometric study${field ? ` on ${field}` : ""} into concise English
+suitable for figure labels in a scientific journal (2-6 words, title case, standard scientific terminology).
+Keep labels that are already in English unchanged. Return the translations in the same order.
+
+${JSON.stringify(labels)}`;
+  const text = await run(apiKey, {
+    max_tokens: 4000,
+    output_config: { effort: "low", format: { type: "json_schema", schema: {
+      type: "object", properties: { labels: { type: "array", items: { type: "string" } } },
+      required: ["labels"], additionalProperties: false } } },
+    messages: [{ role: "user", content: prompt }],
+  });
+  return JSON.parse(text).labels;
+}

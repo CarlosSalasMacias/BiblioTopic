@@ -37,7 +37,7 @@ const csv = (s) => s.split(",").map((x) => x.trim()).filter(Boolean);
 function busy(on) {
   state.busy = on;
   for (const id of ["b-load", "b-run", "b-labels", "b-doc", "b-zip", "b-save", "b-val-sheet", "b-ai-labels",
-    "b-ai-disc", "b-script"]) $(id).disabled = on;
+    "b-ai-disc", "b-script", "b-ai-translate"]) $(id).disabled = on;
 }
 
 // ------------------------------------------------------------------ archivos
@@ -175,16 +175,37 @@ function showResults({ figs, tables, labels }) {
   }
 }
 
+const escH = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 function renderLabels(labels) {
+  const sug = state.valSug || {};
   const parts = Object.entries(labels).map(([model, rows]) => `
     <div data-model="${model}"><p><strong>${model === "lda" ? "LDA" : "BERTopic"}</strong></p>
-      ${rows.map((r) => `<div class="lrow"><b>${r.id}</b><input type="text" value="${r.label.replace(/"/g, "&quot;")}">
-        <span class="terms">${r.terms}</span></div>`).join("")}</div>`);
+      ${rows.map((r, i) => {
+        const sg = (sug[model] || [])[i] || {};
+        const value = state.valPending && sg.best ? sg.best : r.label;
+        const alts = (sg.all || []).map((a) => `<button type="button" class="chip" data-v="${escH(a)}">${escH(a)}</button>`).join("");
+        return `<div class="lrow ${state.valPending && sg.spanish ? "es" : ""}"><b>${r.id}</b><input type="text" value="${escH(value)}">
+        <span class="terms">${escH(r.terms)}</span>
+        ${alts ? `<span class="sugg">Expertos (${sg.agree}/${sg.n} coinciden): ${alts}</span>` : ""}</div>`;
+      }).join("")}</div>`);
   $("labels").innerHTML = parts.join("");
   $("labels-box").hidden = !parts.length;
+  $("labels").querySelectorAll(".chip").forEach((b) => {
+    b.onclick = () => {
+      const row = b.closest(".lrow");
+      row.querySelector("input").value = b.dataset.v;
+      row.classList.remove("es");
+    };
+  });
+  $("labels").querySelectorAll(".lrow input").forEach((inp) => {
+    inp.addEventListener("input", () => inp.closest(".lrow").classList.remove("es"));
+  });
 }
 
 $("b-labels").onclick = () => {
+  const es = $("labels").querySelectorAll(".lrow.es").length;
+  if (es && !confirm(`${es} nombre(s) parecen estar en español y las figuras deben ir en inglés. ¿Aplicarlos de todos modos?`)) return;
+  state.valPending = false;
   const labels = {};
   $("labels").querySelectorAll("[data-model]").forEach((d) => {
     labels[d.dataset.model] = [...d.querySelectorAll("input")].map((i) => i.value.trim() || "Unnamed topic");
@@ -226,6 +247,25 @@ function needKey() {
   }
   return k;
 }
+$("b-ai-translate").onclick = async () => {
+  const key = needKey();
+  if (!key) return;
+  const inputs = [...$("labels").querySelectorAll(".lrow input")];
+  busy(true);
+  toast("Traduciendo los nombres al inglés…", 15000);
+  try {
+    const ai = await import("./ai.js");
+    const out = await ai.translateLabels(key, inputs.map((i) => i.value), $("m-topic").value.trim());
+    out.forEach((t, i) => { if (inputs[i] && t) { inputs[i].value = t; inputs[i].closest(".lrow").classList.remove("es"); } });
+    state.aiLabels = true;
+    state.aiModel = ai.MODEL;
+    toast("Nombres traducidos. Revíselos y pulse «Aplicar nombres».", 9000);
+  } catch (err) {
+    toast("IA: " + (err.message || err), 12000);
+  } finally {
+    busy(false);
+  }
+};
 $("b-ai-labels").onclick = async () => {
   const key = needKey();
   if (!key) return;
@@ -421,7 +461,22 @@ worker.onmessage = ({ data: m }) => {
       const r = m.result;
       const al = Object.entries(r.alpha).map(([k, v]) => `${k}: ${v ?? "n.d."}`).join(" · ");
       $("val-result").innerHTML = `<p class="hint">${r.raters.length} evaluadores (${r.raters.join(", ")}). Alfa de Krippendorff — ${al}</p>`;
-      toast("Validación cargada; se incluirá en el documento.");
+      state.valSug = r.suggestions;
+      state.labels = null; // volver a dibujar el editor de nombres con las propuestas de los expertos
+      const nSug = Object.values(r.suggestions || {}).flat().filter((x) => x.best).length;
+      if (!nSug) {
+        toast("Validación cargada; se incluirá en el documento. Los evaluadores no propusieron nombres.", 9000);
+      } else if (r.applied) {
+        state.valPending = false;
+        toast(`Se aplicaron a las figuras los nombres propuestos por los expertos (${nSug} temas). Puede editarlos en «Nombre de los temas».`, 10000);
+      } else {
+        state.valPending = true;
+        $("val-result").innerHTML += `<p class="warn">Algunos nombres propuestos por los expertos parecen estar en español
+          (${r.spanish.join(", ")}). Las figuras deben ir en inglés: tradúzcalos en «Nombre de los temas» (marcados en
+          naranja) o use «Traducir al inglés con IA», y pulse «Aplicar nombres».</p>`;
+        $("b-ai-translate").hidden = false;
+        toast("Revise los nombres de los expertos: algunos parecen estar en español.", 10000);
+      }
       break;
     }
     case "ai_context":

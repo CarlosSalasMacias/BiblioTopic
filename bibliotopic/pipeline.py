@@ -186,7 +186,7 @@ class Session:
     def _bip_names(self, r):
         """Nombre de los vectores en los biplots: código + nombre corto si los autores lo asignaron."""
         if getattr(r, "custom_labels", False):
-            return [f"{i} {l.split(':', 1)[1].strip()[:24]}" for i, l in zip(r.ids, r.labels)]
+            return [f"{i} {l.split(':', 1)[1].strip()}" for i, l in zip(r.ids, r.labels)]
         return list(r.ids)
 
     # ------------------------------------------------- proyecto / validación / IA
@@ -220,9 +220,28 @@ class Session:
             key = None
         self.validation = analyse(files, key)
         v = self.validation
+        # Nombres propuestos por los expertos: se aplican a las figuras si están en inglés
+        sug = v.get("suggestions", {})
+        per_model, spanish, applied = {}, [], False
+        for name, model, r in (("lda", "LDA", self.lda), ("bert", "BERTopic", self.bert)):
+            if r is None:
+                continue
+            m = sug.get(model, {})
+            current = [l.split(":", 1)[1].strip() if ":" in l else l for l in r.labels]
+            per_model[name] = [{"id": tid, **m[tid]} if tid in m else {"id": tid} for tid in r.ids]
+            spanish += [tid for tid in r.ids if tid in m and m[tid]["spanish"]]
+        if sug and not spanish:
+            new = {}
+            for name, r in (("lda", self.lda), ("bert", self.bert)):
+                if r is not None:
+                    cur = [l.split(":", 1)[1].strip() if ":" in l else l for l in r.labels]
+                    new[name] = [s_.get("best", c) for s_, c in zip(per_model[name], cur)]
+            self.set_labels(new)
+            applied = True
         return {"raters": v["raters"], "alpha": {k: (None if np.isnan(x) else round(x, 3))
                                                    for k, x in v["alpha"].items()},
-                "table": json.loads(v["table"].to_json(orient="split", force_ascii=False))}
+                "table": json.loads(v["table"].to_json(orient="split", force_ascii=False)),
+                "suggestions": per_model, "spanish": spanish, "applied": applied}
 
     def ai_context(self, n_docs=4):
         """Datos que se envían a la IA: temas, documentos representativos y referencias del corpus."""

@@ -204,7 +204,7 @@ def topic_words(path, weights, words, labels, title, color=BLUE, ncols=4, n=8):
         if i >= k:
             ax.axis("off")
             continue
-        w = words[i][:n][::-1]
+        w = [str(x).replace("_", " ") for x in words[i][:n][::-1]]
         v = weights[i][:n][::-1]
         ax.barh(w, v, color=color)
         ax.set_title(wrap(labels[i], 30), fontsize=7.5)
@@ -612,8 +612,13 @@ def biplot(path, hj, title=None, row_kind="period", col_clusters=None, row_clust
         color = PALETTE[cc[i] % len(PALETTE)]
         ax.annotate("", xy=Cs[i], xytext=(0, 0), zorder=2,
                     arrowprops=dict(arrowstyle="-|>", color=color, lw=1.0, mutation_scale=8))
-        texts.append(_halo(ax.text(*(Cs[i] * 1.07), hj.cols.index[i], color=color, fontsize=7.5,
-                                   ha="center", va="center", fontweight="bold", zorder=5)))
+        # nombres largos en dos líneas, alineados hacia fuera de la punta del vector
+        x, y = Cs[i]
+        ha = ("left" if x > 0 else "right") if abs(x) >= 0.6 * abs(y) else "center"
+        va = ("bottom" if y > 0 else "top") if abs(y) > 0.6 * abs(x) else "center"
+        texts.append(_halo(ax.text(*(Cs[i] * 1.04), wrap(hj.cols.index[i], 22), color=color, fontsize=7.5,
+                                   ha=ha, va=va, ma="left" if ha == "left" else ("right" if ha == "right" else "center"),
+                                   fontweight="bold", zorder=5, linespacing=1.0)))
     if row_kind == "period":
         ax.plot(R[:, 0], R[:, 1], color="#555555", lw=0.9, ls=(0, (3, 2)), zorder=3)
         for i in range(len(R) - 1):
@@ -628,6 +633,16 @@ def biplot(path, hj, title=None, row_kind="period", col_clusters=None, row_clust
     ax.set_xlim(-lim, lim)
     ax.set_ylim(-lim, lim)
     ax.set_aspect("equal")
+    # ampliar los límites hasta que quepan todas las etiquetas (nombres largos de los temas)
+    for _ in range(3):
+        fig.canvas.draw()
+        inv = ax.transData.inverted()
+        ext = max(np.abs(inv.transform(t.get_window_extent())).max() for t in texts)
+        if ext <= lim * 0.99:
+            break
+        lim = ext * 1.04
+        ax.set_xlim(-lim, lim)
+        ax.set_ylim(-lim, lim)
     _repel(ax, texts)  # con los límites ya fijados, para que no arrastre las etiquetas hacia dentro
     if col_clusters is not None:
         handles = [Line2D([], [], color=PALETTE[k % len(PALETTE)], lw=2.5, label=f"Topic cluster {k + 1}")
