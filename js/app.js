@@ -1,6 +1,6 @@
 // BiblioTopic — interfaz (hilo principal). El trabajo pesado ocurre en js/worker.js.
 const $ = (id) => document.getElementById(id);
-const worker = new Worker(new URL("./worker.js?v=20261110", import.meta.url), { type: "module" });
+const worker = new Worker(new URL("./worker.js?v=20261111", import.meta.url), { type: "module" });
 const state = { analyses: {}, sections: {}, summary: null, labels: null, busy: false, aiLabels: false, aiModel: "" };
 
 const DEPENDS = { compare: ["lda", "bertopic"], inference: ["compare", "lda", "bertopic"], strategic: ["lda"],
@@ -37,7 +37,7 @@ const csv = (s) => s.split(",").map((x) => x.trim()).filter(Boolean);
 function busy(on) {
   state.busy = on;
   for (const id of ["b-load", "b-run", "b-labels", "b-doc", "b-zip", "b-save", "b-val-sheet", "b-ai-labels",
-    "b-ai-disc", "b-script", "b-ai-translate"]) $(id).disabled = on;
+    "b-ai-disc", "b-script", "b-ai-translate", "b-ai-short"]) $(id).disabled = on;
 }
 
 // ------------------------------------------------------------------ archivos
@@ -175,6 +175,27 @@ function showResults({ figs, tables, labels }) {
   }
 }
 
+// Nombre corto para las figuras (misma regla que short_label en bibliotopic/pipeline.py)
+const SMALL = new Set(["and", "of", "the", "in", "for", "with", "on", "to", "a", "an", "by", "&", "from", "at", "via"]);
+function shortLabel(name, maxlen = 28) {
+  const s = String(name || "").split(/\s+/).filter(Boolean).join(" ");
+  if (s.length <= maxlen) return s;
+  const parts = s.split(/\s+(?:and|&)\s+|\s*[:;,(]\s*|\s+[-\u2013\u2014]\s+/).map((p) => p.trim()).filter(Boolean);
+  const cand = parts.length && (parts[0].split(" ").length >= 2 || parts.length === 1) ? parts[0] : s;
+  const out = [];
+  for (const w of cand.split(" ")) {
+    if (out.length && [...out, w].join(" ").length > maxlen) break;
+    out.push(w);
+  }
+  while (out.length > 1 && SMALL.has(out[out.length - 1].toLowerCase().replace(/[,;:]+$/, ""))) out.pop();
+  return out.join(" ").replace(/[,;:\-\u2013\s]+$/, "");
+}
+// Cambia el nombre completo de una fila; el corto se recalcula si no lo editó el usuario
+function setFull(row, value) {
+  const full = row.querySelector("input.full"), short = row.querySelector("input.short");
+  full.value = value;
+  if (short.dataset.auto === "1") short.value = shortLabel(value);
+}
 const escH = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 function renderLabels(labels) {
   const sug = state.valSug || {};
@@ -184,7 +205,10 @@ function renderLabels(labels) {
         const sg = (sug[model] || [])[i] || {};
         const value = state.valPending && sg.best ? sg.best : r.label;
         const alts = (sg.all || []).map((a) => `<button type="button" class="chip" data-v="${escH(a)}">${escH(a)}</button>`).join("");
-        return `<div class="lrow ${(state.valPending || state.valFlag) && sg.spanish ? "es" : ""}"><b>${r.id}</b><input type="text" value="${escH(value)}">
+        const short = value === r.label && r.short ? r.short : shortLabel(value);
+        const auto = short === shortLabel(value) ? "1" : "0";
+        return `<div class="lrow ${(state.valPending || state.valFlag) && sg.spanish ? "es" : ""}"><b>${r.id}</b><input type="text" class="full" value="${escH(value)}">
+        <label class="shortl">Nombre corto (figuras) <input type="text" class="short" maxlength="40" data-auto="${auto}" value="${escH(short)}"></label>
         <span class="terms">${escH(r.terms)}</span>
         ${alts ? `<span class="sugg">Expertos (${sg.agree}/${sg.n} coinciden): ${alts}</span>` : ""}</div>`;
       }).join("")}</div>`);
@@ -193,12 +217,19 @@ function renderLabels(labels) {
   $("labels").querySelectorAll(".chip").forEach((b) => {
     b.onclick = () => {
       const row = b.closest(".lrow");
-      row.querySelector("input").value = b.dataset.v;
+      setFull(row, b.dataset.v);
       row.classList.remove("es");
     };
   });
-  $("labels").querySelectorAll(".lrow input").forEach((inp) => {
-    inp.addEventListener("input", () => inp.closest(".lrow").classList.remove("es"));
+  $("labels").querySelectorAll(".lrow input.full").forEach((inp) => {
+    inp.addEventListener("input", () => {
+      const row = inp.closest(".lrow");
+      row.classList.remove("es");
+      setFull(row, inp.value);
+    });
+  });
+  $("labels").querySelectorAll(".lrow input.short").forEach((inp) => {
+    inp.addEventListener("input", () => { inp.dataset.auto = inp.value.trim() ? "0" : "1"; });
   });
 }
 
@@ -209,7 +240,8 @@ $("b-labels").onclick = () => {
   state.valFlag = false;
   const labels = {};
   $("labels").querySelectorAll("[data-model]").forEach((d) => {
-    labels[d.dataset.model] = [...d.querySelectorAll("input")].map((i) => i.value.trim() || "Unnamed topic");
+    labels[d.dataset.model] = [...d.querySelectorAll("input.full")].map((i) => i.value.trim() || "Unnamed topic");
+    labels[d.dataset.model + "_short"] = [...d.querySelectorAll("input.short")].map((i) => i.value.trim());
   });
   busy(true);
   toast("Actualizando figuras con los nuevos nombres…");
@@ -251,16 +283,38 @@ function needKey() {
 $("b-ai-translate").onclick = async () => {
   const key = needKey();
   if (!key) return;
-  const inputs = [...$("labels").querySelectorAll(".lrow input")];
+  const inputs = [...$("labels").querySelectorAll(".lrow input.full")];
   busy(true);
   toast("Traduciendo los nombres al inglés…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261110");
+    const ai = await import("./ai.js?v=20261111");
     const out = await ai.translateLabels(key, inputs.map((i) => i.value), $("m-topic").value.trim());
-    out.forEach((t, i) => { if (inputs[i] && t) { inputs[i].value = t; inputs[i].closest(".lrow").classList.remove("es"); } });
+    out.forEach((t, i) => { if (inputs[i] && t) { setFull(inputs[i].closest(".lrow"), t); inputs[i].closest(".lrow").classList.remove("es"); } });
     state.aiLabels = true;
     state.aiModel = ai.MODEL;
     toast("Nombres traducidos. Revíselos y pulse «Aplicar nombres».", 9000);
+  } catch (err) {
+    toast("IA: " + (err.message || err), 12000);
+  } finally {
+    busy(false);
+  }
+};
+$("b-ai-short").onclick = async () => {
+  const key = needKey();
+  if (!key) return;
+  const rows = [...$("labels").querySelectorAll(".lrow")];
+  busy(true);
+  toast("Pidiendo nombres cortos a Claude…", 15000);
+  try {
+    const ai = await import("./ai.js?v=20261111");
+    const out = await ai.shortenLabels(key, rows.map((r) => r.querySelector("input.full").value), $("m-topic").value.trim());
+    out.forEach((t, i) => {
+      const sh = rows[i] && rows[i].querySelector("input.short");
+      if (sh && t) { sh.value = t; sh.dataset.auto = "0"; }
+    });
+    state.aiLabels = true;
+    state.aiModel = ai.MODEL;
+    toast("Nombres cortos propuestos. Revíselos y pulse «Aplicar nombres».", 9000);
   } catch (err) {
     toast("IA: " + (err.message || err), 12000);
   } finally {
@@ -273,15 +327,15 @@ $("b-ai-labels").onclick = async () => {
   busy(true);
   toast("Pidiendo propuestas de nombres a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261110");
+    const ai = await import("./ai.js?v=20261111");
     const ctx = await getContext();
     const out = await ai.suggestLabels(key, ctx, $("m-topic").value.trim());
     const byId = Object.fromEntries(out.map((t) => [t.id, t]));
     $("labels").querySelectorAll(".lrow").forEach((row) => {
       const id = row.querySelector("b").textContent;
       if (byId[id]) {
-        row.querySelector("input").value = byId[id].label;
-        row.querySelector("input").title = byId[id].rationale;
+        setFull(row, byId[id].label);
+        row.querySelector("input.full").title = byId[id].rationale;
       }
     });
     state.aiLabels = true;
@@ -300,7 +354,7 @@ $("b-ai-disc").onclick = async () => {
   out.hidden = false;
   out.textContent = "Redactando la Discusión (puede tardar 1–3 minutos)…";
   try {
-    const ai = await import("./ai.js?v=20261110");
+    const ai = await import("./ai.js?v=20261111");
     const ctx = await getContext();
     const meta = { topic_name: $("m-topic").value.trim() };
     const text = await ai.draftDiscussion(key, ctx, meta, (snap) => { out.textContent = snap; });
@@ -360,7 +414,7 @@ $("b-ai-titles").onclick = async () => {
   busy(true);
   toast("Pidiendo propuestas de título a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261110");
+    const ai = await import("./ai.js?v=20261111");
     const ctx = await getContext();
     const out = await ai.suggestTitles(key, ctx, titleMeta());
     state.aiModel = ai.MODEL;

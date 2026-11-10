@@ -4,6 +4,7 @@ from __future__ import annotations
 import io as _io
 import itertools
 import json
+import re
 import platform
 import zipfile
 from collections import Counter
@@ -54,6 +55,27 @@ def _versions():
         except Exception:
             pass
     return v
+
+
+_SMALL = {"and", "of", "the", "in", "for", "with", "on", "to", "a", "an", "by", "&", "from", "at", "via"}
+
+
+def short_label(name, maxlen=28):
+    """Nombre corto para las figuras: el nombre completo si cabe; si no, su primera parte (antes de «and», «:»,
+    «,» o «(») recortada por palabras hasta maxlen caracteres."""
+    s = " ".join(str(name or "").split())
+    if len(s) <= maxlen:
+        return s
+    parts = [p.strip() for p in re.split(r"\s+(?:and|&)\s+|\s*[:;,(]\s*|\s+[-\u2013\u2014]\s+", s) if p.strip()]
+    cand = parts[0] if parts and (len(parts[0].split()) >= 2 or len(parts) == 1) else s
+    out = []
+    for w in cand.split():
+        if out and len(" ".join(out + [w])) > maxlen:
+            break
+        out.append(w)
+    while len(out) > 1 and out[-1].lower().strip(",;:") in _SMALL:
+        out.pop()
+    return " ".join(out).rstrip(",;:-\u2013 ")
 
 
 class Session:
@@ -169,15 +191,33 @@ class Session:
         out = {}
         for name, r in (("lda", self.lda), ("bert", self.bert)):
             if r is not None:
-                out[name] = [{"id": i, "terms": ", ".join(w[:8]), "label": l.split(":", 1)[1].strip()}
-                             for i, w, l in zip(r.ids, r.top10, r.labels)]
+                out[name] = [{"id": i, "terms": ", ".join(w[:8]), "label": l.split(":", 1)[1].strip(), "short": s}
+                             for i, w, l, s in zip(r.ids, r.top10, r.labels, self._shorts(r))]
         return out
 
     def set_labels(self, labels):
+        """labels: {"lda": [nombres], "lda_short": [nombres cortos para las figuras], "bert": ..., "bert_short": ...}.
+        Si falta el nombre corto (o está vacío) se calcula automáticamente."""
         for name, r in (("lda", self.lda), ("bert", self.bert)):
             if r is not None and name in labels:
-                r.labels = [f"{i}: {l}" for i, l in zip(r.ids, labels[name])]
+                full = [" ".join(str(l).split()) or "Unnamed topic" for l in labels[name]]
+                r.labels = [f"{i}: {l}" for i, l in zip(r.ids, full)]
+                short = list(labels.get(f"{name}_short") or [])
+                short += [""] * (len(full) - len(short))
+                r.short = [" ".join(str(s or "").split()) or short_label(l) for s, l in zip(short, full)]
                 r.custom_labels = True
+
+    @staticmethod
+    def _shorts(r):
+        names = [l.split(":", 1)[1].strip() if ":" in l else l for l in r.labels]
+        sh = getattr(r, "short", None)
+        return list(sh) if sh and len(sh) == len(names) else [short_label(n) for n in names]
+
+    def _fig_labels(self, r):
+        """Nombres de los temas en las figuras: código + nombre corto (los completos van en tablas y texto)."""
+        if getattr(r, "custom_labels", False):
+            return [f"{i}: {s}" for i, s in zip(r.ids, self._shorts(r))]
+        return list(r.labels)
 
     def propose_titles(self, meta=None):
         from .report import propose_titles
@@ -186,7 +226,7 @@ class Session:
     def _bip_names(self, r):
         """Nombre de los vectores en los biplots: código + nombre corto si los autores lo asignaron."""
         if getattr(r, "custom_labels", False):
-            return [f"{i} {l.split(':', 1)[1].strip()}" for i, l in zip(r.ids, r.labels)]
+            return [f"{i} {s}" for i, s in zip(r.ids, self._shorts(r))]
         return list(r.ids)
 
     # ------------------------------------------------- proyecto / validación / IA
@@ -384,13 +424,13 @@ class Session:
             T["T6_LDA_topics"] = lda.topic_table()
             FIG["lda_words"] = F.topic_words(fp("Fig09_LDA_topics.png"),
                                              [np.sort(r)[::-1] for r in lda.beta], lda.top10,
-                                             lda.labels, "LDA topics: top terms (word probability)")
+                                             self._fig_labels(lda), "LDA topics: top terms (word probability)")
             ml = pd.DataFrame(lda.theta, columns=lda.labels).groupby(periods.values).mean().reindex(plabels)
             T["lda_by_period"] = ml.round(4).reset_index(names="Period")
             X["ml"] = ml
             if self.on("temporal"):
                 FIG["lda_time"] = F.topic_heatmap_time(fp("Fig10_LDA_topics_by_period.png"), ml,
-                                                       lda.labels, "LDA topic prevalence by period")
+                                                       self._fig_labels(lda), "LDA topic prevalence by period")
             if self.on("hjbiplot") and len(plabels) >= 3:
                 hj = HJBiplot(ml.rename(columns=dict(zip(lda.labels, self._bip_names(lda)))))
                 hj.col_clusters, hj.k_cols, hj.sil_cols = F.biplot_clusters(hj)[:3]
@@ -402,7 +442,7 @@ class Session:
             T["T7_BERTopic_topics"] = bert.topic_table()
             FIG["bert_words"] = F.topic_words(fp("Fig12_BERTopic_topics.png"),
                                               [np.sort(r)[::-1] for r in bert.ctfidf], bert.top10,
-                                              bert.labels, "BERTopic topics: top terms (c-TF-IDF)",
+                                              self._fig_labels(bert), "BERTopic topics: top terms (c-TF-IDF)",
                                               color=F.ORANGE)
             if bert.xy is not None:
                 FIG["bert_map"] = F.doc_map(fp("Fig13_BERTopic_document_map.png"), bert.xy,
@@ -412,7 +452,7 @@ class Session:
             T["bert_by_period"] = mb.round(4).reset_index(names="Period")
             if self.on("temporal"):
                 FIG["bert_time"] = F.topic_heatmap_time(fp("Fig14_BERTopic_topics_by_period.png"), mb,
-                                                        bert.labels, "BERTopic topic prevalence by period",
+                                                        self._fig_labels(bert), "BERTopic topic prevalence by period",
                                                         cmap="Oranges")
             if self.on("hjbiplot") and len(plabels) >= 3:
                 hj = HJBiplot(mb.rename(columns=dict(zip(bert.labels, self._bip_names(bert)))))
@@ -445,7 +485,8 @@ class Session:
         X["C"] = C
         if self.on("temporal") and (trends_l is not None or trends_b is not None):
             FIG["trends"] = F.trends(fp("Fig18_hot_cold_topics.png"), trends_l, trends_b,
-                                     lda.labels if lda else None, bert.labels if bert else None)
+                                     self._fig_labels(lda) if lda else None,
+                                     self._fig_labels(bert) if bert else None)
 
         if self.has_countries and lda is not None and self.on("hjbiplot"):
             topc = list(T["T4_countries"]["Country"].values[:c["top_countries"]])

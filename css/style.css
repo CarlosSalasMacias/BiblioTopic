@@ -94,4 +94,6 @@ button.ai { border-color: #8C6BB1; color: #8C6BB1; }
 .title-opts small { color: var(--muted); display: block; font-size: 12px; }
 .labels .sugg { grid-column: 2; font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .labels .chip { margin: 0; padding: 1px 8px; font-size: 12px; border-radius: 10px; }
-.labels .lrow.es input { border-color: var(--warn); box-shadow: 0 0 0 1px var(--warn); }
+.labels .lrow.es input.full { border-color: var(--warn); box-shadow: 0 0 0 1px var(--warn); }
+.labels .shortl { grid-column: 2; font-size: 12px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+.labels .shortl input { flex: 1; font-size: 12px; padding: 2px 6px; }

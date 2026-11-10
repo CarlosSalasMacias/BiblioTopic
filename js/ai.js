@@ -160,3 +160,20 @@ ${JSON.stringify(labels)}`;
   });
   return JSON.parse(text).labels;
 }
+
+export async function shortenLabels(apiKey, labels, field) {
+  const prompt = `These are topic labels from a bibliometric study${field ? ` on ${field}` : ""}. Write a short version of
+each one for figure labels in a scientific journal: at most 28 characters, 2-4 words, English, same capitalisation style,
+keeping the core concept (it must still identify the topic). Keep labels that already have 28 characters or fewer
+unchanged. Return the short labels in the same order.
+
+${JSON.stringify(labels)}`;
+  const text = await run(apiKey, {
+    max_tokens: 4000,
+    output_config: { effort: "low", format: { type: "json_schema", schema: {
+      type: "object", properties: { labels: { type: "array", items: { type: "string" } } },
+      required: ["labels"], additionalProperties: false } } },
+    messages: [{ role: "user", content: prompt }],
+  });
+  return JSON.parse(text).labels;
+}

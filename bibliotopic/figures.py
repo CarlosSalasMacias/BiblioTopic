@@ -197,7 +197,7 @@ def k_selection(path, t, chosen):
 def topic_words(path, weights, words, labels, title, color=BLUE, ncols=4, n=8):
     k = len(labels)
     nrows = int(np.ceil(k / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(2.3 * ncols, 1.9 * nrows))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(2.5 * ncols, 2.3 * nrows))
     axes = np.atleast_1d(axes).ravel()
     for i in range(len(axes)):
         ax = axes[i]
@@ -207,10 +207,12 @@ def topic_words(path, weights, words, labels, title, color=BLUE, ncols=4, n=8):
         w = [str(x).replace("_", " ") for x in words[i][:n][::-1]]
         v = weights[i][:n][::-1]
         ax.barh(w, v, color=color)
-        ax.set_title(wrap(labels[i], 30), fontsize=7.5)
+        ax.set_title(wrap(labels[i], 26), fontsize=7.5, linespacing=1.05)
         ax.tick_params(axis="y", labelsize=7)
         ax.tick_params(axis="x", labelsize=6)
-    fig.tight_layout()
+        ax.xaxis.set_major_locator(plt.MaxNLocator(3))
+    fig.tight_layout(w_pad=0.8)
+    fig.subplots_adjust(hspace=0.75)  # espacio para títulos de dos líneas
     return _save(fig, path)
 
 
@@ -316,11 +318,18 @@ def _halo(text_obj, w=2.5):
     return text_obj
 
 
-def _repel(ax, texts):
-    """Evita que las etiquetas se solapen (adjustText si está disponible)."""
+def _repel(ax, texts, x=None, y=None, strong=False):
+    """Evita que las etiquetas se solapen (adjustText si está disponible).
+    strong: más fuerza y más iteraciones, para figuras con muchas etiquetas (biplots)."""
     try:
         from adjustText import adjust_text
-        adjust_text(texts, ax=ax, expand=(1.15, 1.3), arrowprops=dict(arrowstyle="-", color="#999999", lw=0.4))
+        kw = dict(expand=(1.15, 1.3))
+        if strong:
+            kw = dict(expand=(1.25, 1.5), force_text=(0.5, 0.8), force_static=(0.3, 0.5), force_pull=(0.005, 0.005),
+                      iter_lim=3000, time_lim=8, ensure_inside_axes=True)
+            if x is not None:
+                kw.update(x=x, y=y)
+        adjust_text(texts, ax=ax, arrowprops=dict(arrowstyle="-", color="#999999", lw=0.4), **kw)
     except Exception:
         pass
 
@@ -587,14 +596,76 @@ def biplot_clusters(hj, rows=False, kmax=5):
     return (*col, *row)
 
 
+
+def _place_labels(fig, ax, items, segs):
+    """Colocación determinista de etiquetas sin solapes (biplots con muchas etiquetas).
+    items: [(texto, ancla (x, y) en datos, dirección preferida (dx, dy) o None)]. Cada etiqueta prueba posiciones
+    alrededor de su ancla (primero en la dirección preferida, a distancias crecientes) y se queda con la primera que
+    no toca otras etiquetas, flechas ni puntos y queda dentro de los ejes. Devuelve las etiquetas que hubo que
+    alejar de su ancla (para dibujarles una línea guía)."""
+    fig.canvas.draw()
+    rend = fig.canvas.get_renderer()
+    T, inv = ax.transData, ax.transData.inverted()
+    box = ax.get_window_extent(rend)
+    dens = []  # puntos (en píxeles) de las flechas y marcadores: obstáculos
+    for a, b in segs:
+        pa, pb = T.transform(a), T.transform(b)
+        n = max(2, int(np.hypot(*(pb - pa)) / 5))
+        dens.append(pa + np.outer(np.linspace(0.08, 1, n), pb - pa))
+    dens = np.vstack(dens) if dens else np.zeros((0, 2))
+    placed, moved = [], []
+
+    def cost(bb, d):
+        x0, y0, x1, y1 = bb.x0 - 2, bb.y0 - 2, bb.x1 + 2, bb.y1 + 2
+        c = 0.0
+        for q in placed:
+            ox = min(x1, q.x1) - max(x0, q.x0)
+            oy = min(y1, q.y1) - max(y0, q.y0)
+            if ox > 0 and oy > 0:
+                c += 1000 + ox * oy
+        if len(dens):
+            c += 60 * np.count_nonzero((dens[:, 0] > x0) & (dens[:, 0] < x1) & (dens[:, 1] > y0) & (dens[:, 1] < y1))
+        out = max(0, box.x0 - x0) + max(0, x1 - box.x1) + max(0, box.y0 - y0) + max(0, y1 - box.y1)
+        return c + 400 * out + 0.6 * d
+
+    for t, anchor, dirn in items:
+        pa = T.transform(anchor)
+        if dirn is not None and np.hypot(*dirn) > 0:
+            base = np.arctan2(dirn[1], dirn[0])
+            angs = [base + np.radians(a) for a in (0, 15, -15, 30, -30, 50, -50, 75, -75, 110, -110, 150, -150, 180)]
+            dists = (5, 14, 26, 40, 56, 76, 100)
+        else:
+            angs = [np.radians(a) for a in (0, 180, 90, -90, 45, -45, 135, -135)]
+            dists = (4, 12, 22, 36, 54)
+        best = None
+        for d in dists:
+            for a in angs:
+                u = np.array([np.cos(a), np.sin(a)])
+                ha = "left" if u[0] > 0.35 else ("right" if u[0] < -0.35 else "center")
+                va = "bottom" if u[1] > 0.35 else ("top" if u[1] < -0.35 else "center")
+                t.set_ha(ha), t.set_va(va)
+                t.set_multialignment(ha if ha != "center" else "center")
+                t.set_position(inv.transform(pa + d * u))
+                bb = t.get_window_extent(rend)
+                c = cost(bb, d)
+                if best is None or c < best[0]:
+                    best = (c, d, ha, va, t.get_position(), bb)
+            if best[0] < 0.6 * dists[-1] + 1:  # sin solapes a esta distancia: no buscar más lejos
+                break
+        _, d, ha, va, pos, bb = best
+        t.set_ha(ha), t.set_va(va), t.set_multialignment(ha if ha != "center" else "center")
+        t.set_position(pos)
+        placed.append(bb)
+        if d > 30:
+            moved.append((t, anchor, bb))
+    return moved
+
 def biplot(path, hj, title=None, row_kind="period", col_clusters=None, row_clusters=None, row_color="#0072B2"):
     """Vectores = temas (coloreados por conglomerado); puntos = periodos o países.
     Cada conglomerado se encierra con una sola forma (envolvente convexa o elipse) y las formas no se
-    superponen. En periodos se dibuja la trayectoria cronológica. Sin título: va en la leyenda del manuscrito."""
+    superponen. En periodos se dibuja la trayectoria cronológica. Sin título: va en la leyenda del manuscrito.
+    Las etiquetas evitan solaparse entre sí y con los vectores; cada eje se ajusta a su contenido."""
     R, Cs, lim = _biplot_geometry(hj)
-    fig, ax = plt.subplots(figsize=(7, 6.4))
-    ax.axhline(0, color="#d0d0d0", lw=0.6, zorder=0)
-    ax.axvline(0, color="#d0d0d0", lw=0.6, zorder=0)
     cc = col_clusters if col_clusters is not None else np.zeros(len(Cs), int)
     rc = row_clusters
     gcol = [PALETTE[k % len(PALETTE)] for k in sorted(set(cc))] if col_clusters is not None else []
@@ -602,8 +673,14 @@ def biplot(path, hj, title=None, row_kind="period", col_clusters=None, row_clust
     # Una sola familia de formas por figura: países si están agrupados; si no, temas
     groups, colors = (_groups(R, rc), grow) if rc is not None else (_groups(Cs, col_clusters), gcol)
     polys = _fit_shapes(groups, EXPORT["cluster_shape"], lim) if colors else None
-    if polys:
-        lim = max(lim, 1.04 * max(np.abs(p).max() for p in polys))
+    allp = np.vstack([R, Cs] + list(polys or []))
+    xl, yl = 1.15 * np.abs(allp[:, 0]).max(), 1.15 * np.abs(allp[:, 1]).max()
+    yl = max(yl, 0.45 * xl)
+    xl = max(xl, 0.45 * yl)
+    h = float(np.clip(7.0 * yl / xl, 4.6, 8.6))
+    fig, ax = plt.subplots(figsize=(7.4, h + 0.9))
+    ax.axhline(0, color="#d0d0d0", lw=0.6, zorder=0)
+    ax.axvline(0, color="#d0d0d0", lw=0.6, zorder=0)
     for poly, color in zip(polys or [], colors):
         ax.fill(*poly.T, color=color, alpha=0.12, lw=0, zorder=1)
         ax.plot(*np.vstack([poly, poly[:1]]).T, color=color, lw=0.9, ls="--", alpha=0.9, zorder=1)
@@ -612,11 +689,11 @@ def biplot(path, hj, title=None, row_kind="period", col_clusters=None, row_clust
         color = PALETTE[cc[i] % len(PALETTE)]
         ax.annotate("", xy=Cs[i], xytext=(0, 0), zorder=2,
                     arrowprops=dict(arrowstyle="-|>", color=color, lw=1.0, mutation_scale=8))
-        # nombres largos en dos líneas, alineados hacia fuera de la punta del vector
+        # nombres en dos líneas como máximo, alineados hacia fuera de la punta del vector
         x, y = Cs[i]
         ha = ("left" if x > 0 else "right") if abs(x) >= 0.6 * abs(y) else "center"
         va = ("bottom" if y > 0 else "top") if abs(y) > 0.6 * abs(x) else "center"
-        texts.append(_halo(ax.text(*(Cs[i] * 1.04), wrap(hj.cols.index[i], 22), color=color, fontsize=7.5,
+        texts.append(_halo(ax.text(*(Cs[i] * 1.04), wrap(hj.cols.index[i], 20), color=color, fontsize=7,
                                    ha=ha, va=va, ma="left" if ha == "left" else ("right" if ha == "right" else "center"),
                                    fontweight="bold", zorder=5, linespacing=1.0)))
     if row_kind == "period":
@@ -628,32 +705,54 @@ def biplot(path, hj, title=None, row_kind="period", col_clusters=None, row_clust
         c = PALETTE[(rc[i] + 4) % len(PALETTE)] if rc is not None else row_color
         ax.scatter(x, y, s=46, color=c, edgecolors="white", linewidths=0.8, zorder=4,
                    marker="s" if row_kind == "period" else "o")
-        texts.append(_halo(ax.text(x, y, " " + str(hj.rows.index[i]), fontsize=7.5, color="#1a1a1a",
+        texts.append(_halo(ax.text(x, y, " " + str(hj.rows.index[i]), fontsize=7, color="#1a1a1a",
                                    zorder=5)))
-    ax.set_xlim(-lim, lim)
-    ax.set_ylim(-lim, lim)
     ax.set_aspect("equal")
-    # ampliar los límites hasta que quepan todas las etiquetas (nombres largos de los temas)
+    ax.set_xlim(-xl, xl)
+    ax.set_ylim(-yl, yl)
+    # ampliar los límites hasta que quepan todas las etiquetas
     for _ in range(3):
         fig.canvas.draw()
         inv = ax.transData.inverted()
-        ext = max(np.abs(inv.transform(t.get_window_extent())).max() for t in texts)
-        if ext <= lim * 0.99:
+        ext = np.vstack([np.abs(inv.transform(t.get_window_extent())) for t in texts])
+        ex, ey = ext[:, 0].max(), ext[:, 1].max()
+        if ex <= xl * 0.99 and ey <= yl * 0.99:
             break
-        lim = ext * 1.04
-        ax.set_xlim(-lim, lim)
-        ax.set_ylim(-lim, lim)
-    _repel(ax, texts)  # con los límites ya fijados, para que no arrastre las etiquetas hacia dentro
+        xl, yl = max(xl, ex * 1.04), max(yl, ey * 1.04)
+        ax.set_xlim(-xl, xl)
+        ax.set_ylim(-yl, yl)
+    # colocación sin solapes; si alguna etiqueta queda fuera, se amplían los límites y se repite
+    items = [(texts[i], Cs[i], Cs[i]) for i in np.argsort(-np.hypot(*Cs.T))]
+    items += [(texts[len(Cs) + i], R[i], None) for i in range(len(R))]
+    segs = [((0, 0), c) for c in Cs] + [(r, r) for r in R]
+    for _ in range(3):
+        moved = _place_labels(fig, ax, items, segs)
+        fig.canvas.draw()
+        inv = ax.transData.inverted()
+        ext = np.vstack([np.abs(inv.transform(t.get_window_extent())) for t in texts])
+        ex, ey = ext[:, 0].max(), ext[:, 1].max()
+        if ex <= xl * 1.001 and ey <= yl * 1.001:
+            break
+        xl, yl = max(xl, ex * 1.03), max(yl, ey * 1.03)
+        ax.set_xlim(-xl, xl)
+        ax.set_ylim(-yl, yl)
+    inv = ax.transData.inverted()
+    for t, anchor, bb in moved:  # línea guía hacia la punta del vector o el punto
+        c = inv.transform([[min(max(ax.transData.transform(anchor)[0], bb.x0), bb.x1),
+                            min(max(ax.transData.transform(anchor)[1], bb.y0), bb.y1)]])[0]
+        ax.plot([anchor[0], c[0]], [anchor[1], c[1]], color="#999999", lw=0.4, zorder=2)
     if col_clusters is not None:
         handles = [Line2D([], [], color=PALETTE[k % len(PALETTE)], lw=2.5, label=f"Topic cluster {k + 1}")
                    for k in sorted(set(cc))]
         if rc is not None:
             handles += [Line2D([], [], marker="o", ls="", color=PALETTE[(k + 4) % len(PALETTE)], markersize=7,
                                label=f"Country cluster {k + 1}") for k in sorted(set(rc))]
-        ax.legend(handles=handles, loc="upper left", frameon=False, fontsize=7.5)
-    ax.set_xlim(-lim, lim)
-    ax.set_ylim(-lim, lim)
-    ax.set_aspect("equal")
+        # leyenda debajo del gráfico para no tapar etiquetas
+        ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.11 * 7.4 / (h + 0.9)),
+                  frameon=False, fontsize=7.5, ncol=min(len(handles), 5 if len(handles) > 6 else 3),
+                  columnspacing=1.2, handlelength=1.6)
+    ax.set_xlim(-xl, xl)
+    ax.set_ylim(-yl, yl)
     ax.set_xlabel(f"Axis 1 ({100 * hj.inertia[0]:.1f}%)")
     ax.set_ylabel(f"Axis 2 ({100 * hj.inertia[1]:.1f}%)")
     return _save(fig, path)

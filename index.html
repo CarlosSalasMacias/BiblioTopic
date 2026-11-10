@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BiblioTopic</title>
 <meta name="description" content="Bibliometría, LDA, BERTopic y HJ-Biplot sobre corpus de Web of Science y Scopus, con borrador de Métodos y Resultados.">
-<link rel="stylesheet" href="css/style.css?v=20261110">
+<link rel="stylesheet" href="css/style.css?v=20261111">
 </head>
 <body>
 <header>
@@ -97,13 +97,15 @@
     <div id="tables"></div>
     <div id="labels-box" hidden>
       <h3>Nombre de los temas (en inglés)</h3>
-      <p class="hint">Asigne un nombre interpretativo a cada tema, en inglés; se usará en figuras, tablas y texto.
-        Al cargar las hojas de validación se aplican los nombres propuestos por los expertos.</p>
+      <p class="hint">Asigne un nombre interpretativo a cada tema, en inglés. El nombre completo se usa en tablas y
+        texto; en las figuras se usa el <b>nombre corto</b> (máx. ~28 caracteres), que se calcula automáticamente y
+        puede editar. Al cargar las hojas de validación se aplican los nombres propuestos por los expertos.</p>
       <div id="labels" class="labels"></div>
       <div class="row">
         <button id="b-labels">Aplicar nombres</button>
         <button id="b-ai-labels" class="ai">Sugerir nombres con IA</button>
         <button id="b-ai-translate" class="ai" hidden>Traducir al inglés con IA</button>
+        <button id="b-ai-short" class="ai">Acortar nombres con IA</button>
       </div>
     </div>
     <div id="validation-box">
@@ -175,6 +177,6 @@
 </main>
 <footer class="wrap">BiblioTopic · código abierto en
   <a href="https://github.com/CarlosSalasMacias/BiblioTopic">GitHub</a></footer>
-<script type="module" src="js/app.js?v=20261110"></script>
+<script type="module" src="js/app.js?v=20261111"></script>
 </body>
 </html>

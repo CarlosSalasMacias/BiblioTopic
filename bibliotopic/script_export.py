@@ -189,6 +189,7 @@ def build_package(S, meta=None) -> bytes:
     for name, r in (("lda", S.lda), ("bert", S.bert)):
         if r is not None and getattr(r, "custom_labels", False):
             labels[name] = [l.split(":", 1)[1].strip() if ":" in l else l for l in r.labels]
+            labels[name + "_short"] = S._shorts(r)
     k = S.lda.k if S.lda is not None else None
     params = {key: v for key, v in S.cfg.items()}
     config = {
