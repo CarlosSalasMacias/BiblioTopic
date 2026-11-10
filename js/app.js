@@ -1,6 +1,6 @@
 // BiblioTopic — interfaz (hilo principal). El trabajo pesado ocurre en js/worker.js.
 const $ = (id) => document.getElementById(id);
-const worker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
+const worker = new Worker(new URL("./worker.js?v=20261110", import.meta.url), { type: "module" });
 const state = { analyses: {}, sections: {}, summary: null, labels: null, busy: false, aiLabels: false, aiModel: "" };
 
 const DEPENDS = { compare: ["lda", "bertopic"], inference: ["compare", "lda", "bertopic"], strategic: ["lda"],
@@ -184,7 +184,7 @@ function renderLabels(labels) {
         const sg = (sug[model] || [])[i] || {};
         const value = state.valPending && sg.best ? sg.best : r.label;
         const alts = (sg.all || []).map((a) => `<button type="button" class="chip" data-v="${escH(a)}">${escH(a)}</button>`).join("");
-        return `<div class="lrow ${state.valPending && sg.spanish ? "es" : ""}"><b>${r.id}</b><input type="text" value="${escH(value)}">
+        return `<div class="lrow ${(state.valPending || state.valFlag) && sg.spanish ? "es" : ""}"><b>${r.id}</b><input type="text" value="${escH(value)}">
         <span class="terms">${escH(r.terms)}</span>
         ${alts ? `<span class="sugg">Expertos (${sg.agree}/${sg.n} coinciden): ${alts}</span>` : ""}</div>`;
       }).join("")}</div>`);
@@ -206,6 +206,7 @@ $("b-labels").onclick = () => {
   const es = $("labels").querySelectorAll(".lrow.es").length;
   if (es && !confirm(`${es} nombre(s) parecen estar en español y las figuras deben ir en inglés. ¿Aplicarlos de todos modos?`)) return;
   state.valPending = false;
+  state.valFlag = false;
   const labels = {};
   $("labels").querySelectorAll("[data-model]").forEach((d) => {
     labels[d.dataset.model] = [...d.querySelectorAll("input")].map((i) => i.value.trim() || "Unnamed topic");
@@ -254,7 +255,7 @@ $("b-ai-translate").onclick = async () => {
   busy(true);
   toast("Traduciendo los nombres al inglés…", 15000);
   try {
-    const ai = await import("./ai.js");
+    const ai = await import("./ai.js?v=20261110");
     const out = await ai.translateLabels(key, inputs.map((i) => i.value), $("m-topic").value.trim());
     out.forEach((t, i) => { if (inputs[i] && t) { inputs[i].value = t; inputs[i].closest(".lrow").classList.remove("es"); } });
     state.aiLabels = true;
@@ -272,7 +273,7 @@ $("b-ai-labels").onclick = async () => {
   busy(true);
   toast("Pidiendo propuestas de nombres a Claude…", 15000);
   try {
-    const ai = await import("./ai.js");
+    const ai = await import("./ai.js?v=20261110");
     const ctx = await getContext();
     const out = await ai.suggestLabels(key, ctx, $("m-topic").value.trim());
     const byId = Object.fromEntries(out.map((t) => [t.id, t]));
@@ -299,7 +300,7 @@ $("b-ai-disc").onclick = async () => {
   out.hidden = false;
   out.textContent = "Redactando la Discusión (puede tardar 1–3 minutos)…";
   try {
-    const ai = await import("./ai.js");
+    const ai = await import("./ai.js?v=20261110");
     const ctx = await getContext();
     const meta = { topic_name: $("m-topic").value.trim() };
     const text = await ai.draftDiscussion(key, ctx, meta, (snap) => { out.textContent = snap; });
@@ -359,7 +360,7 @@ $("b-ai-titles").onclick = async () => {
   busy(true);
   toast("Pidiendo propuestas de título a Claude…", 15000);
   try {
-    const ai = await import("./ai.js");
+    const ai = await import("./ai.js?v=20261110");
     const ctx = await getContext();
     const out = await ai.suggestTitles(key, ctx, titleMeta());
     state.aiModel = ai.MODEL;
@@ -464,18 +465,18 @@ worker.onmessage = ({ data: m }) => {
       state.valSug = r.suggestions;
       state.labels = null; // volver a dibujar el editor de nombres con las propuestas de los expertos
       const nSug = Object.values(r.suggestions || {}).flat().filter((x) => x.best).length;
+      state.valPending = false;
+      state.valFlag = r.spanish.length > 0;
       if (!nSug) {
         toast("Validación cargada; se incluirá en el documento. Los evaluadores no propusieron nombres.", 9000);
-      } else if (r.applied) {
-        state.valPending = false;
-        toast(`Se aplicaron a las figuras los nombres propuestos por los expertos (${nSug} temas). Puede editarlos en «Nombre de los temas».`, 10000);
       } else {
-        state.valPending = true;
-        $("val-result").innerHTML += `<p class="warn">Algunos nombres propuestos por los expertos parecen estar en español
-          (${r.spanish.join(", ")}). Las figuras deben ir en inglés: tradúzcalos en «Nombre de los temas» (marcados en
-          naranja) o use «Traducir al inglés con IA», y pulse «Aplicar nombres».</p>`;
-        $("b-ai-translate").hidden = false;
-        toast("Revise los nombres de los expertos: algunos parecen estar en español.", 10000);
+        toast(`Se aplicaron a las figuras los nombres propuestos por los expertos (${nSug} temas). Puede editarlos en «Nombre de los temas».`, 10000);
+        if (r.spanish.length) {
+          $("val-result").innerHTML += `<p class="warn">Se aplicaron los nombres de los expertos, pero algunos parecen
+            estar en español (${r.spanish.join(", ")}) y las figuras deben ir en inglés. Tradúzcalos en «Nombre de los
+            temas» (marcados en naranja) o use «Traducir al inglés con IA», y pulse «Aplicar nombres».</p>`;
+          $("b-ai-translate").hidden = false;
+        }
       }
       break;
     }

@@ -230,7 +230,8 @@ class Session:
             current = [l.split(":", 1)[1].strip() if ":" in l else l for l in r.labels]
             per_model[name] = [{"id": tid, **m[tid]} if tid in m else {"id": tid} for tid in r.ids]
             spanish += [tid for tid in r.ids if tid in m and m[tid]["spanish"]]
-        if sug and not spanish:
+        # Los nombres de los expertos se aplican siempre; los que parecen en español se señalan para traducirlos
+        if any("best" in x for rows in per_model.values() for x in rows):
             new = {}
             for name, r in (("lda", self.lda), ("bert", self.bert)):
                 if r is not None:

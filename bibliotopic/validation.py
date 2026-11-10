@@ -283,9 +283,12 @@ def suggestions(r, key):
         counts = {}
         for lab in labs:
             counts.setdefault(lab.lower(), []).append(lab)
-        best = max(counts.values(), key=len)[0]
+        groups = sorted(counts.values(), key=len, reverse=True)  # estable: en empate, el primer evaluador
+        # Las figuras van en inglés: se prefiere el nombre en inglés más propuesto, si alguno lo está
+        english = [g_ for g_ in groups if not looks_spanish(g_[0])]
+        top = english[0] if english else groups[0]
+        best = top[0]
         alts = list(dict.fromkeys(labs))
-        out.setdefault(model, {})[topic] = {"best": best, "all": alts, "n": len(labs),
-                                            "agree": len(max(counts.values(), key=len)),
-                                            "spanish": any(looks_spanish(x) for x in alts)}
+        out.setdefault(model, {})[topic] = {"best": best, "all": alts, "n": len(labs), "agree": len(top),
+                                            "spanish": looks_spanish(best)}
     return out
