@@ -431,7 +431,7 @@ class Session:
             if self.on("temporal"):
                 FIG["lda_time"] = F.topic_heatmap_time(fp("Fig10_LDA_topics_by_period.png"), ml,
                                                        self._fig_labels(lda), "LDA topic prevalence by period")
-            if self.on("hjbiplot") and len(plabels) >= 3:
+            if self.on("hjbiplot") and ml.dropna().shape[0] >= 3:  # periodos sin documentos se omiten
                 hj = HJBiplot(ml.rename(columns=dict(zip(lda.labels, self._bip_names(lda)))))
                 hj.col_clusters, hj.k_cols, hj.sil_cols = F.biplot_clusters(hj)[:3]
                 FIG["hj_lda"] = F.biplot(fp("Fig11_HJBiplot_LDA_periods.png"), hj,
@@ -454,7 +454,7 @@ class Session:
                 FIG["bert_time"] = F.topic_heatmap_time(fp("Fig14_BERTopic_topics_by_period.png"), mb,
                                                         self._fig_labels(bert), "BERTopic topic prevalence by period",
                                                         cmap="Oranges")
-            if self.on("hjbiplot") and len(plabels) >= 3:
+            if self.on("hjbiplot") and mb.dropna().shape[0] >= 3:
                 hj = HJBiplot(mb.rename(columns=dict(zip(bert.labels, self._bip_names(bert)))))
                 hj.col_clusters, hj.k_cols, hj.sil_cols = F.biplot_clusters(hj)[:3]
                 FIG["hj_bert"] = F.biplot(fp("Fig15_HJBiplot_BERTopic_periods.png"), hj,
@@ -471,6 +471,10 @@ class Session:
             trends_b, _ = compare.topic_trends(bert.theta, df["PY"], c["min_docs_year"])
             T["bert_trends"] = trends_b.assign(Topic=bert.labels).round(5)
         X["trends_lda"], X["trends_bert"] = trends_l, trends_b
+        tr0 = trends_l if trends_l is not None else trends_b
+        if tr0 is not None:
+            X["min_docs_year_used"] = tr0.attrs.get("min_docs_year", c["min_docs_year"])
+            X["trend_years"] = tr0.attrs.get("n_years")
 
         if lda is not None and bert is not None and self.on("compare"):
             C = compare.compare(lda, bert, df["PY"], c["min_docs_year"], c["tau_strong"],

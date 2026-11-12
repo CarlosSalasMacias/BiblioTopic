@@ -483,7 +483,7 @@ def build(R, path, meta, sections=None):
             if R.on("temporal"):
                 txt += (f"La evolución de cada tema se estimó mediante la regresión lineal de su prevalencia media "
                         f"anual sobre el año de publicación {cite('griffiths')}, considerando los años con al "
-                        f"menos {cfg['min_docs_year']} documentos; los temas con pendiente significativa "
+                        f"menos {X.get('min_docs_year_used', cfg['min_docs_year'])} documentos; los temas con pendiente significativa "
                         "(p < 0.05) se clasificaron como emergentes (hot) o en declive (cold). ")
             if R.on("hjbiplot"):
                 txt += (f"Para analizar conjuntamente temas y tiempo se agruparon los años en periodos "

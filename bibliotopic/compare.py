@@ -35,15 +35,26 @@ def topic_trends(theta, years, min_docs_year=10):
     df = pd.DataFrame(theta)
     df["Y"] = years.values.astype(int)
     counts = df["Y"].value_counts()
-    keep = counts[counts >= min_docs_year].index
+    # En corpus pequeños pocos años alcanzan el mínimo: se rebaja (a la mitad, hasta 1) hasta tener 3 años
+    thr = max(1, int(min_docs_year))
+    while thr > 1 and (counts >= thr).sum() < 3:
+        thr = max(1, thr // 2)
+    keep = counts[counts >= thr].index
     m = df[df["Y"].isin(keep)].groupby("Y").mean().sort_index()
     rows = []
-    for t in m.columns:
-        r = stats.linregress(m.index.values, m[t].values)
-        rows.append((r.slope, r.pvalue))
+    for t in range(theta.shape[1]):
+        if len(m) >= 3:
+            r = stats.linregress(m.index.values, m[t].values)
+            rows.append((r.slope, r.pvalue))
+        else:  # menos de 3 años con datos: no se puede estimar una tendencia
+            rows.append((0.0, 1.0))
     out = pd.DataFrame(rows, columns=["Slope", "p-value"])
+    out["p-value"] = out["p-value"].fillna(1.0)
+    out["Slope"] = out["Slope"].fillna(0.0)
     out["Trend"] = np.where(out["p-value"] < 0.05, np.where(out["Slope"] > 0, "Hot", "Cold"),
                             "Stable")
+    out.attrs["min_docs_year"] = thr
+    out.attrs["n_years"] = len(m)
     return out, m
 
 

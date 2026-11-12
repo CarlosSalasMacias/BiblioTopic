@@ -9,6 +9,7 @@ class HJBiplot:
     """X (filas x columnas) -> marcadores fila J = U·D y columna H = V·D (misma calidad para ambos)."""
 
     def __init__(self, data: pd.DataFrame, scale=True):
+        data = data.dropna(how="any")  # p. ej., periodos sin documentos en corpus pequeños
         self.data = data
         X = data.values.astype(float)
         X = X - X.mean(axis=0)

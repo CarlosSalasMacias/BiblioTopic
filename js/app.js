@@ -1,6 +1,6 @@
 // BiblioTopic — interfaz (hilo principal). El trabajo pesado ocurre en js/worker.js.
 const $ = (id) => document.getElementById(id);
-const worker = new Worker(new URL("./worker.js?v=20261111", import.meta.url), { type: "module" });
+const worker = new Worker(new URL("./worker.js?v=20261112", import.meta.url), { type: "module" });
 const state = { analyses: {}, sections: {}, summary: null, labels: null, busy: false, aiLabels: false, aiModel: "" };
 
 const DEPENDS = { compare: ["lda", "bertopic"], inference: ["compare", "lda", "bertopic"], strategic: ["lda"],
@@ -287,7 +287,7 @@ $("b-ai-translate").onclick = async () => {
   busy(true);
   toast("Traduciendo los nombres al inglés…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261111");
+    const ai = await import("./ai.js?v=20261112");
     const out = await ai.translateLabels(key, inputs.map((i) => i.value), $("m-topic").value.trim());
     out.forEach((t, i) => { if (inputs[i] && t) { setFull(inputs[i].closest(".lrow"), t); inputs[i].closest(".lrow").classList.remove("es"); } });
     state.aiLabels = true;
@@ -306,7 +306,7 @@ $("b-ai-short").onclick = async () => {
   busy(true);
   toast("Pidiendo nombres cortos a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261111");
+    const ai = await import("./ai.js?v=20261112");
     const out = await ai.shortenLabels(key, rows.map((r) => r.querySelector("input.full").value), $("m-topic").value.trim());
     out.forEach((t, i) => {
       const sh = rows[i] && rows[i].querySelector("input.short");
@@ -327,7 +327,7 @@ $("b-ai-labels").onclick = async () => {
   busy(true);
   toast("Pidiendo propuestas de nombres a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261111");
+    const ai = await import("./ai.js?v=20261112");
     const ctx = await getContext();
     const out = await ai.suggestLabels(key, ctx, $("m-topic").value.trim());
     const byId = Object.fromEntries(out.map((t) => [t.id, t]));
@@ -354,7 +354,7 @@ $("b-ai-disc").onclick = async () => {
   out.hidden = false;
   out.textContent = "Redactando la Discusión (puede tardar 1–3 minutos)…";
   try {
-    const ai = await import("./ai.js?v=20261111");
+    const ai = await import("./ai.js?v=20261112");
     const ctx = await getContext();
     const meta = { topic_name: $("m-topic").value.trim() };
     const text = await ai.draftDiscussion(key, ctx, meta, (snap) => { out.textContent = snap; });
@@ -414,7 +414,7 @@ $("b-ai-titles").onclick = async () => {
   busy(true);
   toast("Pidiendo propuestas de título a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261111");
+    const ai = await import("./ai.js?v=20261112");
     const ctx = await getContext();
     const out = await ai.suggestTitles(key, ctx, titleMeta());
     state.aiModel = ai.MODEL;
