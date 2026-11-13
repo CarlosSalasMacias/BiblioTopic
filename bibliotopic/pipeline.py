@@ -42,6 +42,7 @@ DEFAULTS = dict(
     k_min=5, k_max=30, k_step=5, k=None, seed=42, n_stab_lda=3, n_stab_bert=3,
     bert_nr_topics="lda", min_cluster_size=None, period_width=5, top_countries=15,
     tau_strong=0.5, tau_partial=0.3, min_docs_year=10, synonyms="",
+    keep_unknown_language=True, keep_unknown_type=True, exclude_incomplete_year=True,
     export_tiff=True, cluster_shape="hull", composite=True, n_boot=200,
 )
 
@@ -117,7 +118,7 @@ class Session:
                 errors.append(f"{name}: {e}")
         if not self.frames:
             return {"ok": False, "errors": errors}
-        self.merged, self.merge_stats = bio.merge(self.frames)
+        self.merged, self.merge_stats, self.dup_links = bio.merge(self.frames, return_links=True)
         self.merge_stats["formats"] = fmts
         self.input_files = [name for name, _ in files]
         self.availability = bio.field_availability(self.merged)
@@ -130,6 +131,9 @@ class Session:
             "year_min": int(yrs.min()), "year_max": int(yrs.max()),
             "doc_types": m["DT"][m["DT"] != ""].value_counts().to_dict(),
             "languages": m["LA"][m["LA"] != ""].value_counts().to_dict(),
+            # registros sin dato de idioma o tipo, por base de origen (no son «otros idiomas»)
+            "unknown": {f: {r["Source"]: int(r["Unknown"]) for _, r in bio.status_by_db(m, f).iterrows()
+                            if r["Unknown"]} for f in ("LA", "DT")},
         }
 
     # ------------------------------------------------- 2. filtros y texto
@@ -138,7 +142,12 @@ class Session:
         c = self.cfg
         F.configure(tiff=bool(c["export_tiff"]), cluster_shape=c["cluster_shape"])
         df, self.excl_steps = bio.apply_filters(self.merged, c["year_min"], c["year_max"],
-                                                c["doc_types"], c["languages"])
+                                                c["doc_types"], c["languages"],
+                                                keep_unknown_type=c["keep_unknown_type"],
+                                                keep_unknown_language=c["keep_unknown_language"])
+        # idioma y tipo de documento: elegible / no elegible / sin dato, por base de origen
+        self.field_status = {f: bio.status_by_db(self.merged, f, sel)
+                             for f, sel in (("LA", c["languages"]), ("DT", c["doc_types"]))}
         self.has_countries = self.availability["C1"] > 0.3 and self.on("countries")
         if self.availability["C1"] > 0.3:
             df = biblio.add_country_columns(df)
@@ -464,21 +473,37 @@ class Session:
                 X["hj_b"] = hj
 
         trends_l = trends_b = None
+        # el año en curso suele estar incompleto (la exportación se hizo durante el año): se excluye
+        import datetime as _dt
+        this_year = _dt.date.today().year
+        excl = [this_year] if c.get("exclude_incomplete_year", True) and int(df["PY"].max()) >= this_year else []
+        X["trend_excluded_years"] = excl
         if lda is not None:
-            trends_l, _ = compare.topic_trends(lda.theta, df["PY"], c["min_docs_year"])
-            T["lda_trends"] = trends_l.assign(Topic=lda.labels).round(5)
+            trends_l, _ = compare.topic_trends(lda.theta, df["PY"], c["min_docs_year"], excl)
+            T["lda_trends"] = trends_l.assign(Topic=lda.labels)[["Topic"] + list(trends_l.columns)].round(5)
         if bert is not None:
-            trends_b, _ = compare.topic_trends(bert.theta, df["PY"], c["min_docs_year"])
-            T["bert_trends"] = trends_b.assign(Topic=bert.labels).round(5)
+            trends_b, _ = compare.topic_trends(bert.theta, df["PY"], c["min_docs_year"], excl)
+            tb = trends_b.assign(Topic=bert.labels)[["Topic"] + list(trends_b.columns)]
+            # sensibilidad: tendencias solo con los documentos que el agrupamiento asignó (sin reasignar outliers)
+            ok = bert.topics_raw >= 0
+            if ok.any() and (~ok).any():
+                th_raw = np.zeros((int(ok.sum()), bert.k))
+                th_raw[np.arange(int(ok.sum())), bert.topics_raw[ok]] = 1.0
+                tr_raw, _ = compare.topic_trends(th_raw, df["PY"].values[ok], c["min_docs_year"], excl)
+                tb["Slope (clustered only)"] = tr_raw["Slope"].values
+                tb["Trend (clustered only)"] = tr_raw["Trend"].values
+                X["trends_bert_clustered"] = tr_raw
+            T["bert_trends"] = tb.round(5)
         X["trends_lda"], X["trends_bert"] = trends_l, trends_b
         tr0 = trends_l if trends_l is not None else trends_b
         if tr0 is not None:
             X["min_docs_year_used"] = tr0.attrs.get("min_docs_year", c["min_docs_year"])
             X["trend_years"] = tr0.attrs.get("n_years")
+            X["trend_year_range"] = tr0.attrs.get("years")
 
         if lda is not None and bert is not None and self.on("compare"):
             C = compare.compare(lda, bert, df["PY"], c["min_docs_year"], c["tau_strong"],
-                                c["tau_partial"])
+                                c["tau_partial"], excl, titles=df["TI"].values)
             T["T8_model_metrics"] = C["metrics"]
             T["T9_topic_alignment"] = C["matches"].drop(columns=["_i", "_j"])
             T["doc_agreement"] = pd.DataFrame(list(C["agreement"].items()), columns=["Measure", "Value"])
@@ -488,9 +513,11 @@ class Session:
                                         "Document-level agreement between models")
         X["C"] = C
         if self.on("temporal") and (trends_l is not None or trends_b is not None):
-            FIG["trends"] = F.trends(fp("Fig18_hot_cold_topics.png"), trends_l, trends_b,
+            _tr = F.trends(fp("Fig18_hot_cold_topics.png"), trends_l, trends_b,
                                      self._fig_labels(lda) if lda else None,
                                      self._fig_labels(bert) if bert else None)
+            if _tr:
+                FIG["trends"] = _tr
 
         if self.has_countries and lda is not None and self.on("hjbiplot"):
             topc = list(T["T4_countries"]["Country"].values[:c["top_countries"]])
@@ -583,15 +610,31 @@ class Session:
                         X["composites"][name] = keys
                         FIG[name] = pth
 
+        # trazabilidad de la fusión: registros originales vinculados a cada documento con duplicados
+        links = getattr(self, "dup_links", None)
+        if links is not None and len(links):
+            T["merge_linked_records"] = links
+        if "CONFLICTS" in self.merged:
+            conf = self.merged[self.merged["CONFLICTS"] != ""]
+            if len(conf):
+                T["merge_conflicts"] = conf[["TI", "PY", "DI", "DB_SOURCES", "N_RECORDS", "CONFLICTS"]].reset_index(drop=True)
         self.tables, self.figs, self.facts = T, FIG, X
         with pd.ExcelWriter(out / "tables" / "all_tables.xlsx") as xw:
             for name, t in T.items():
                 t.to_excel(xw, sheet_name=name[:31], index=False)
-        docs = df[["UT", "DI", "TI", "SO", "PY", "DB_SOURCES"]].copy()
+        docs = df[["UT", "DI", "TI", "SO", "PY", "DB_SOURCES"]
+                  + [c_ for c_ in ("N_RECORDS", "FIELDS_FROM_OTHER", "CONFLICTS") if c_ in df]].copy()
         if lda is not None:
             docs["LDA_dominant"] = [lda.ids[i] for i in lda.dominant]
         if bert is not None:
+            docs["BERTopic_original"] = [bert.ids[i] if i >= 0 else "Outlier" for i in bert.topics_raw]
             docs["BERTopic"] = [bert.ids[i] for i in bert.topics]
+            if getattr(bert, "assign_sim", None) is not None:
+                docs["BERTopic_assignment"] = np.where(bert.reassigned, "Outlier reassigned (most similar c-TF-IDF)",
+                                                       "HDBSCAN cluster")
+                docs["BERTopic_similarity"] = np.round(bert.assign_sim, 4)
+                docs["BERTopic_margin_to_2nd"] = np.round(bert.assign_margin, 4)
+                docs["BERTopic_low_confidence"] = bert.low_confidence
         docs.to_csv(out / "tables" / "documents_topics.csv", index=False)
         (out / "run_config.json").write_text(json.dumps(
             {"config": c, "versions": self.versions, "embedding": self.emb_name,

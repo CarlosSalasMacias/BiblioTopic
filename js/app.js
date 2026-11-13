@@ -1,6 +1,6 @@
 // BiblioTopic — interfaz (hilo principal). El trabajo pesado ocurre en js/worker.js.
 const $ = (id) => document.getElementById(id);
-const worker = new Worker(new URL("./worker.js?v=20261112", import.meta.url), { type: "module" });
+const worker = new Worker(new URL("./worker.js?v=20261113", import.meta.url), { type: "module" });
 const state = { analyses: {}, sections: {}, summary: null, labels: null, busy: false, aiLabels: false, aiModel: "" };
 
 const DEPENDS = { compare: ["lda", "bertopic"], inference: ["compare", "lda", "bertopic"], strategic: ["lda"],
@@ -74,6 +74,11 @@ function showSummary(s) {
   if (av.DE < 30 && av.ID < 30) warns.push("Sin palabras clave: no habrá red de palabras clave.");
   if (av.TC < 30) warns.push("Sin número de citas: no habrá mapa estratégico ni citas por año.");
   if (st.records_by_db.WoS && av.C1 < 30) warns.push("En WoS exporte con «Full Record and Cited References».");
+  for (const [f, nom] of [["LA", "idioma"], ["DT", "tipo de documento"]]) {
+    const u = Object.entries((s.unknown || {})[f] || {});
+    if (u.length) warns.push(`${u.map(([k, v]) => `${k}: ${v.toLocaleString()}`).join(" · ")} registros sin ${nom} informado. `
+      + `Se conservan por defecto (opción «Sin dato» en las opciones de filtrado); desmárquela para excluirlos.`);
+  }
   box.innerHTML = `
     <div class="stats">
       <div class="stat"><b>${st.records_total.toLocaleString()}</b><span>registros cargados</span></div>
@@ -91,23 +96,30 @@ function showSummary(s) {
   $("o-ymin").value = s.year_min;
   // por defecto, hasta el último año completo
   $("o-ymax").value = Math.min(s.year_max, new Date().getFullYear() - 1);
-  chips("o-dt", s.doc_types, ["Article", "Review"]);
-  chips("o-la", s.languages, ["English"]);
+  const unk = (f) => Object.values((s.unknown || {})[f] || {}).reduce((a, b) => a + b, 0);
+  const unkBy = (f) => Object.entries((s.unknown || {})[f] || {}).map(([k, v]) => `${k}: ${v.toLocaleString()}`).join(" · ");
+  chips("o-dt", s.doc_types, ["Article", "Review"], unk("DT"), unkBy("DT"));
+  chips("o-la", s.languages, ["English"], unk("LA"), unkBy("LA"));
   $("s-analyses").hidden = false;
 }
 
-function chips(id, counts, defaults) {
+// Valores del campo + «Sin dato» (registros sin el campo: p. ej., Scopus sin columna de idioma). Los
+// registros sin dato no son «otro idioma»: se conservan por defecto y la decisión queda explícita.
+function chips(id, counts, defaults, unknown = 0, unknownBy = "") {
   const box = $(id);
   const keys = Object.keys(counts);
   if (!keys.length) {
-    box.innerHTML = '<span class="hint">(no disponible en los archivos)</span>';
+    box.innerHTML = '<span class="hint">(no disponible en los archivos; no se filtra)</span>';
     return;
   }
   const useDefault = keys.some((k) => defaults.includes(k));
   box.innerHTML = keys.map((k) => `<label><input type="checkbox" value="${k}"
-      ${!useDefault || defaults.includes(k) ? "checked" : ""}> ${k} (${counts[k]})</label>`).join("");
+      ${!useDefault || defaults.includes(k) ? "checked" : ""}> ${k} (${counts[k]})</label>`).join("")
+    + (unknown ? `<label title="${unknownBy}"><input type="checkbox" value="__unknown__" checked>
+      <i>Sin dato</i> (${unknown}${unknownBy ? "; " + unknownBy : ""})</label>` : "");
 }
-const checked = (id) => [...$(id).querySelectorAll("input:checked")].map((i) => i.value);
+const checked = (id) => [...$(id).querySelectorAll("input:checked")].map((i) => i.value).filter((v) => v !== "__unknown__");
+const keepUnknown = (id) => !$(id).querySelector('input[value="__unknown__"]') || $(id).querySelector('input[value="__unknown__"]').checked;
 
 // ------------------------------------------------------------------ análisis
 function buildChecks(id, items, defaults) {
@@ -132,6 +144,7 @@ $("b-run").onclick = () => {
     year_min: num("o-ymin") || null, year_max: num("o-ymax") || null,
     doc_types: checked("o-dt").length ? checked("o-dt") : null,
     languages: checked("o-la").length ? checked("o-la") : null,
+    keep_unknown_language: keepUnknown("o-la"), keep_unknown_type: keepUnknown("o-dt"),
     query_terms: csv($("o-q").value), extra_stopwords: csv($("o-sw").value), synonyms: $("o-syn").value,
     k_min: num("o-kmin"), k_max: num("o-kmax"), k_step: num("o-kstep"), k: num("o-k") || null,
     bert_nr_topics: $("o-bnr").value === "lda" ? "lda" : null,
@@ -287,7 +300,7 @@ $("b-ai-translate").onclick = async () => {
   busy(true);
   toast("Traduciendo los nombres al inglés…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261112");
+    const ai = await import("./ai.js?v=20261113");
     const out = await ai.translateLabels(key, inputs.map((i) => i.value), $("m-topic").value.trim());
     out.forEach((t, i) => { if (inputs[i] && t) { setFull(inputs[i].closest(".lrow"), t); inputs[i].closest(".lrow").classList.remove("es"); } });
     state.aiLabels = true;
@@ -306,7 +319,7 @@ $("b-ai-short").onclick = async () => {
   busy(true);
   toast("Pidiendo nombres cortos a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261112");
+    const ai = await import("./ai.js?v=20261113");
     const out = await ai.shortenLabels(key, rows.map((r) => r.querySelector("input.full").value), $("m-topic").value.trim());
     out.forEach((t, i) => {
       const sh = rows[i] && rows[i].querySelector("input.short");
@@ -327,7 +340,7 @@ $("b-ai-labels").onclick = async () => {
   busy(true);
   toast("Pidiendo propuestas de nombres a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261112");
+    const ai = await import("./ai.js?v=20261113");
     const ctx = await getContext();
     const out = await ai.suggestLabels(key, ctx, $("m-topic").value.trim());
     const byId = Object.fromEntries(out.map((t) => [t.id, t]));
@@ -354,7 +367,7 @@ $("b-ai-disc").onclick = async () => {
   out.hidden = false;
   out.textContent = "Redactando la Discusión (puede tardar 1–3 minutos)…";
   try {
-    const ai = await import("./ai.js?v=20261112");
+    const ai = await import("./ai.js?v=20261113");
     const ctx = await getContext();
     const meta = { topic_name: $("m-topic").value.trim() };
     const text = await ai.draftDiscussion(key, ctx, meta, (snap) => { out.textContent = snap; });
@@ -414,7 +427,7 @@ $("b-ai-titles").onclick = async () => {
   busy(true);
   toast("Pidiendo propuestas de título a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261112");
+    const ai = await import("./ai.js?v=20261113");
     const ctx = await getContext();
     const out = await ai.suggestTitles(key, ctx, titleMeta());
     state.aiModel = ai.MODEL;

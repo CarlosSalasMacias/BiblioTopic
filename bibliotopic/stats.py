@@ -111,7 +111,11 @@ def inference_table(corpus, lda, bert, B=200, seed=42):
     t_coh = compare_topics(lda.npmi, bert.npmi)
     t_st = compare_topics(lda.stab, bert.stab)
     ok = bert.topics_raw >= 0
+    # dos poblaciones con su propio denominador e intervalo: (a) todos los documentos con los outliers de
+    # BERTopic reasignados; (b) solo los documentos asignados por el agrupamiento (asignación original)
     agr = bootstrap_agreement(lda.dominant, bert.topics, B=B, seed=seed)
+    agr_ok = (bootstrap_agreement(lda.dominant[ok], bert.topics_raw[ok], B=B, seed=seed)
+              if ok.sum() > 2 and (~ok).any() else None)
     rows = [
         ("Mean NPMI coherence", coh["LDA"], coh["BERTopic"], t_coh,
          f"Bootstrap difference {coh['difference']['mean']:.3f} "
@@ -128,13 +132,19 @@ def inference_table(corpus, lda, bert, B=200, seed=42):
                     "p-value": round(t["p"], 4) if not np.isnan(t["p"]) else "",
                     "Effect size r": round(t["r"], 3) if not np.isnan(t["r"]) else "",
                     "Note": note})
-    out.append({"Metric": "Document agreement ARI", "LDA (95% CI)": "", "BERTopic (95% CI)":
-                f"{adjusted_rand_score(lda.dominant, bert.topics):.3f} [{agr['ARI'][0]:.3f}, {agr['ARI'][1]:.3f}]",
-                "Mann-Whitney U": "", "p-value": "", "Effect size r": "", "Note": "Bootstrap over documents"})
-    out.append({"Metric": "Document agreement NMI", "LDA (95% CI)": "", "BERTopic (95% CI)":
-                f"{normalized_mutual_info_score(lda.dominant, bert.topics):.3f} [{agr['NMI'][0]:.3f}, {agr['NMI'][1]:.3f}]",
-                "Mann-Whitney U": "", "p-value": "", "Effect size r": "", "Note": f"{int(ok.sum())} non-outlier documents"})
-    facts = {"coh": coh, "stab_lda": st_l, "stab_bert": st_b, "t_coh": t_coh, "t_stab": t_st, "agr": agr}
+    n_all, n_ok = len(ok), int(ok.sum())
+    for metric, fn in (("ARI", adjusted_rand_score), ("NMI", normalized_mutual_info_score)):
+        pops = [("all documents, outliers reassigned", lda.dominant, bert.topics, agr, n_all)]
+        if agr_ok is not None:
+            pops.append(("clustered documents only, original assignment", lda.dominant[ok], bert.topics_raw[ok],
+                         agr_ok, n_ok))
+        for pop, a_, b_, ci, n_ in pops:
+            out.append({"Metric": f"Document agreement {metric} ({pop})", "LDA (95% CI)": "",
+                        "BERTopic (95% CI)": f"{fn(a_, b_):.3f} [{ci[metric][0]:.3f}, {ci[metric][1]:.3f}]",
+                        "Mann-Whitney U": "", "p-value": "", "Effect size r": "",
+                        "Note": f"n = {n_:,} documents; bootstrap over documents"})
+    facts = {"coh": coh, "stab_lda": st_l, "stab_bert": st_b, "t_coh": t_coh, "t_stab": t_st, "agr": agr,
+             "agr_clustered": agr_ok, "n_all": n_all, "n_clustered": n_ok}
     return pd.DataFrame(out), facts
 
 

@@ -275,22 +275,37 @@ def contingency(path, cont, title):
 
 
 def trends(path, tl, tb, lda_labels, bert_labels):
+    """Pendiente de la prevalencia anual por tema con IC 95 %. Rojo/azul: tendencia significativa tras
+    corregir por pruebas múltiples (BH); gris: sin tendencia detectada; los no estimables se omiten."""
     panels = [(t, labs, name) for t, labs, name in
-              [(tl, lda_labels, "LDA"), (tb, bert_labels, "BERTopic")] if t is not None]
+              [(tl, lda_labels, "LDA"), (tb, bert_labels, "BERTopic")]
+              if t is not None and t["Slope"].notna().any()]
+    if not panels:
+        return None
     n = max(len(p[0]) for p in panels)
-    fig, axes = plt.subplots(1, len(panels), figsize=(4.5 * len(panels), 0.28 * n + 1.6))
+    fig, axes = plt.subplots(1, len(panels), figsize=(4.6 * len(panels), 0.3 * n + 1.9))
     axes = np.atleast_1d(axes)
     for ax, (t, labs, name) in zip(axes, panels):
-        order = np.argsort(t["Slope"].values)
+        idx = np.where(t["Slope"].notna().values)[0]
+        order = idx[np.argsort(t["Slope"].values[idx])]
         cols = [RED if t["Trend"][i] == "Hot" else BLUE if t["Trend"][i] == "Cold" else "#bbbbbb"
                 for i in order]
-        ax.barh([wrap(labs[i], 34) for i in order], t["Slope"].values[order] * 100, color=cols)
+        sl = t["Slope"].values[order] * 100
+        err = None
+        if "CI low" in t:
+            lo, hi = t["CI low"].values[order] * 100, t["CI high"].values[order] * 100
+            err = np.vstack([sl - lo, hi - sl])
+        ax.barh([wrap(labs[i], 34) for i in order], sl, color=cols, xerr=err,
+                error_kw=dict(ecolor="#444444", elinewidth=0.6, capsize=1.5))
         ax.axvline(0, color=GREY, lw=0.6)
         if len(panels) > 1:
             ax.set_title(name)
-        ax.set_xlabel("Slope of annual prevalence (×100)")
+        ax.set_xlabel("Slope of annual prevalence (×100) with 95% CI")
         ax.tick_params(axis="y", labelsize=6.5)
-    fig.tight_layout()
+    handles = [plt.Rectangle((0, 0), 1, 1, color=c_) for c_ in (RED, BLUE, "#bbbbbb")]
+    fig.legend(handles, ["Increasing (q < 0.05)", "Decreasing (q < 0.05)", "No significant trend"],
+               loc="lower center", ncol=3, frameon=False, fontsize=7.5, bbox_to_anchor=(0.5, -0.01))
+    fig.tight_layout(rect=(0, 0.05, 1, 1))
     return _save(fig, path)
 
 

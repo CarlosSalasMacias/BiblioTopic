@@ -84,17 +84,23 @@ def fit_topics(X, reduced, nr_topics, min_cluster_size):
     return lab, native, W, idf
 
 
-def reassign_outliers(X, labels, W, idf):
-    out = np.where(labels < 0)[0]
-    if len(out) == 0:
-        return labels.copy()
-    D = normalize(X[out], norm="l1", axis=1)
+def assignment_similarity(X, W, idf):
+    """Similitud coseno de cada documento con el vector c-TF-IDF de cada tema (misma ponderación que c-TF-IDF)."""
+    D = normalize(X, norm="l1", axis=1)
     D.data = np.sqrt(D.data)
     D = D @ sp.diags(idf)
-    sim = cosine_similarity(D, W)
+    return cosine_similarity(D, W)
+
+
+def reassign_outliers(X, labels, W, idf, sim=None):
+    """Asigna cada outlier (-1) al tema con mayor similitud c-TF-IDF. Devuelve (etiquetas, similitudes)."""
+    out = np.where(labels < 0)[0]
+    if sim is None:
+        sim = assignment_similarity(X, W, idf)
     new = labels.copy()
-    new[out] = sim.argmax(axis=1)
-    return new
+    if len(out):
+        new[out] = sim[out].argmax(axis=1)
+    return new, sim
 
 
 class BERTResult:
@@ -110,7 +116,18 @@ class BERTResult:
             X, reduced_list[0], nr_topics, self.min_cluster_size)
         self.k = self.ctfidf.shape[0]
         self.outlier_rate = float((self.topics_raw == -1).mean())
-        self.topics = reassign_outliers(X, self.topics_raw, self.ctfidf, idf)
+        self.topics, sim = reassign_outliers(X, self.topics_raw, self.ctfidf, idf)
+        # trazabilidad de la asignación de cada documento: original (agrupamiento), final, similitud y motivo
+        n_ = len(self.topics)
+        self.assign_sim = sim[np.arange(n_), self.topics] if self.k else np.zeros(n_)
+        srt = np.sort(sim, axis=1) if self.k > 1 else np.zeros((n_, 2))
+        self.assign_margin = srt[:, -1] - srt[:, -2] if self.k > 1 else np.zeros(n_)
+        self.reassigned = self.topics_raw < 0
+        clustered = self.assign_sim[~self.reassigned]
+        # baja confianza: outlier reasignado con similitud inferior al percentil 25 de la de los documentos
+        # agrupados con su propio tema
+        self.low_conf_threshold = float(np.percentile(clustered, 25)) if len(clustered) else 0.0
+        self.low_confidence = self.reassigned & (self.assign_sim < self.low_conf_threshold)
         vocab = corpus.vocab
         self.top10 = [list(vocab[np.argsort(-r)[:10]]) for r in self.ctfidf]
         self.top25 = [list(vocab[np.argsort(-r)[:25]]) for r in self.ctfidf]
@@ -143,7 +160,9 @@ class BERTResult:
             "Label": self.labels,
             "Top terms": [", ".join(w) for w in self.top10],
             "Prevalence (%)": (100 * self.prevalence).round(2),
+            "Prevalence, clustered documents only (%)": (100 * self.sizes / max(1, self.sizes.sum())).round(2),
             "Documents (before outlier reassignment)": self.sizes,
+            "Outliers reassigned": np.bincount(self.topics[self.topics_raw < 0], minlength=self.k),
             "NPMI": np.round(self.npmi, 3),
             "Stability": np.round(self.stab, 3),
         })
