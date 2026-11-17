@@ -76,6 +76,16 @@ modelo convergido (coseno medio 0.44–0.55) y su NPMI es mucho menor (0.03–0.
 perfil «Exploración rápida» usa ahora batch con 30 iteraciones (coseno 0.99 con el modelo convergido) y conviene
 repetir con la versión 2 los análisis hechos con la versión 1.
 
+### Paleta de colores de las figuras
+
+| Cambio | Justificación |
+|---|---|
+| Una sola paleta por artículo para todas las figuras (barras, mapas de calor, mapa de colaboración, redes, biplots, mapa temático, Sankey, PRISMA). Los temas de BERTopic conservan su color en el gráfico de términos y en el mapa de documentos. | Antes cada figura usaba su propio esquema (viridis, magma, Blues, tab20…) y un mismo tema podía cambiar de color. |
+| Seis paletas (Tierra, Océano, Salud, Tecnología, Sociedad, Clásica), con dos variantes cada una, y elección **automática según la temática** (ecuaciones y términos de búsqueda y las 50 palabras clave más frecuentes). La variante depende del propio corpus. Selector en la interfaz con vista previa; al cambiarla después del análisis solo se vuelven a dibujar las figuras. Se registra en `run_config.json` (`figure_palette`). | Dos artículos distintos no deben tener figuras idénticas. |
+| Todas las paletas están validadas: 8 colores categóricos en orden fijo con separación suficiente para daltonismo (protanopía y deuteranopía, ΔE ≥ 8 en OKLab entre colores contiguos) y con visión normal (ΔE ≥ 15), y escalas secuenciales de un solo tono con luminosidad monótona. | Muchas revistas exigen figuras legibles para lectores con daltonismo. |
+
+No cambia el tiempo de análisis: los colores solo intervienen al dibujar.
+
 ### 3. Comparación LDA–BERTopic y TRI
 
 - Mejor correspondencia de cada tema en el otro modelo (muchos a uno), junto al par húngaro, para detectar pares

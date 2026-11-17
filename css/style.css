@@ -131,3 +131,7 @@ button.ai { border-color: #8C6BB1; color: #8C6BB1; }
 .ovbar .both, .ovleg .both { background: #4f9e83; }
 .ovbar .wos, .ovleg .wos { background: #d39a4a; }
 @media (max-width: 520px) { .ovnums b { font-size: 22px; } }
+
+.palette-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 10px; }
+.swatch { display: inline-flex; gap: 2px; }
+.swatch i { display: inline-block; width: 16px; height: 16px; border-radius: 3px; }

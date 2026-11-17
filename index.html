@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BiblioTopic</title>
 <meta name="description" content="Bibliometría, LDA, BERTopic y HJ-Biplot sobre corpus de Web of Science y Scopus, con borrador de Métodos y Resultados.">
-<link rel="stylesheet" href="css/style.css?v=20261120">
+<link rel="stylesheet" href="css/style.css?v=20261121">
 </head>
 <body>
 <header>
@@ -92,6 +92,12 @@
           <option value="quick">Exploración rápida</option>
         </select></label>
       <span id="estimate" class="hint"></span>
+    </div>
+    <div class="palette-row">
+      <label>Paleta de colores de las figuras
+        <select id="o-palette"><option value="auto">Automática</option></select></label>
+      <span id="pal-swatch" class="swatch" aria-hidden="true"></span>
+      <span id="pal-note" class="hint"></span>
     </div>
     <div id="estimate-warn"></div>
     <div id="analyses" class="checks"></div>
@@ -262,6 +268,6 @@
 </main>
 <footer class="wrap">BiblioTopic · código abierto en
   <a href="https://github.com/CarlosSalasMacias/BiblioTopic">GitHub</a> · Diseñado por Carlos Salas-Macías &amp; Karime Montes-Escobar</footer>
-<script type="module" src="js/app.js?v=20261120"></script>
+<script type="module" src="js/app.js?v=20261121"></script>
 </body>
 </html>

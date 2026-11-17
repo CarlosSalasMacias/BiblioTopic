@@ -4,7 +4,7 @@ import { UMAP } from "https://cdn.jsdelivr.net/npm/umap-js@1.4.0/+esm";
 
 const PY_FILES = ["__init__.py", "io.py", "biblio.py", "text.py", "lda_model.py", "bert_model.py",
   "hjbiplot.py", "compare.py", "figures.py", "report.py", "pipeline.py", "stats.py", "validation.py",
-  "citations.py", "evolution.py", "script_export.py"];
+  "citations.py", "evolution.py", "script_export.py", "palettes.py"];
 const EMB_MODEL = "Xenova/all-MiniLM-L6-v2";
 const TRANSFORMERS_URL = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.1";
 
@@ -150,7 +150,7 @@ class LdaPool {
     });
     const tries = [];
     for (let i = 0; i < this.n; i++) {
-      tries.push(boot(new Worker(new URL("./lda_worker.js?v=20261120", import.meta.url), { type: "module" })));
+      tries.push(boot(new Worker(new URL("./lda_worker.js?v=20261121", import.meta.url), { type: "module" })));
     }
     const res = await Promise.allSettled(tries);
     this.workers = res.filter((r) => r.status === "fulfilled").map((r) => r.value);
@@ -320,7 +320,9 @@ json.dumps({k: S.table_json(k) for k in ["T1_main_information", "T2_top_sources"
             "merge_conflicts"]}, ensure_ascii=False, default=str)`));
   const labels = JSON.parse(py.runPython("json.dumps(S.topic_labels(), ensure_ascii=False)"));
   const quality = JSON.parse(py.runPython("json.dumps(S.quality_checks(), ensure_ascii=False, default=str)"));
-  post("results", { figs: out, tables, labels, quality }, transfer);
+  const palette = JSON.parse(py.runPython("json.dumps(getattr(S, 'palette', None) or {}, default=str)"));
+  const palettes = JSON.parse(py.runPython("from bibliotopic import palettes as _PAL; json.dumps(_PAL.catalogue())"));
+  post("results", { figs: out, tables, labels, quality, palette, palettes }, transfer);
 }
 
 async function setLabels(labels, aiUsed) {
@@ -443,6 +445,16 @@ self.onmessage = async (ev) => {
     else if (cmd === "estimate") {
       const e = JSON.parse(await callPy("json.dumps(S.estimate(json.loads(_cfg)))", { _cfg: JSON.stringify(ev.data.cfg) }));
       post("estimate", { estimate: e });
+    }
+    else if (cmd === "palette_preview") {
+      const p = JSON.parse(await callPy("json.dumps(S.palette_choice(json.loads(_cfg)), default=str)", { _cfg: JSON.stringify(ev.data.cfg) }));
+      post("palette", { palette: p });
+    }
+    else if (cmd === "palette") {  // cambiar la paleta después del análisis: solo se vuelven a dibujar las figuras
+      progress(0.2, "Aplicando la paleta a las figuras…");
+      await callPy("S.set_palette(json.loads(_pk), _pv)", { _pk: JSON.stringify(ev.data.key), _pv: ev.data.variant });
+      await py.runPythonAsync("S.final = False");
+      await render();
     }
     else if (cmd === "titles") await proposeTitles(ev.data.meta);
   } catch (e) {

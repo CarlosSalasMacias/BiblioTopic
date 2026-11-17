@@ -151,3 +151,17 @@ def test_relative_convergence_stops_early():
     m, _, _ = L.fit_lda(X, 4, seed=1, max_iter=200, tol=0.001)
     assert m.n_iter_ < 200
     assert L.lda_params(4)["relative_tol"] == 0.001
+
+
+def test_palettes_valid_and_theme_choice():
+    from bibliotopic import palettes as P
+    for k in P.ORDER:
+        for v in (0, 1):
+            p = P.Palette(k, v)
+            assert len(p.cat) == 8 and len(set(p.cat)) == 8 and sorted(p.cat) == sorted(P.PALETTES[k]["cat"])
+            Ls = [P.hex2oklch(c)[0] for c in p.seq]
+            assert all(a > b for a, b in zip(Ls, Ls[1:]))  # escala secuencial: de clara a oscura
+            assert p.increase != p.decrease
+    assert P.choose(['TITLE-ABS-KEY ( coffee OR "coffea arabica" )'], ["coffee", "soil", "shade"])[0] == "earth"
+    assert P.choose([], ["machine learning", "energy", "battery"])[0] == "tech"
+    assert P.choose([], [])[0] == "classic"

@@ -110,6 +110,11 @@ python analisis_bibliotopic.py --nucleos 8
 - Borrador de la Discusión en español que solo cita documentos del propio corpus; donde hace falta literatura
   externa deja la marca `[cita externa]`.
 
+**Figuras con una paleta común**
+- Todas las figuras de un análisis usan la misma paleta, elegida automáticamente según la temática (Tierra,
+  Océano, Salud, Tecnología, Sociedad o Clásica, con dos variantes), validada para lectores con daltonismo. Puede
+  cambiarse en «Paleta de colores de las figuras», también después del análisis, sin repetirlo.
+
 **Salidas**
 - Documento Word con los apartados elegidos: texto en español; título, figuras y tablas en inglés; texto en negro
   y figuras sin título (la descripción va en la leyenda).

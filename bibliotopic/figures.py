@@ -12,10 +12,46 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import matplotlib.patheffects as pe  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
+from matplotlib.colors import LinearSegmentedColormap  # noqa: E402
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch  # noqa: E402
 
+from . import palettes as PAL  # noqa: E402
+
 DPI = 300
-BLUE, ORANGE, GREEN, GREY, RED = "#2a6f97", "#e07a1f", "#3a8d5c", "#7a7a7a", "#b23a48"
+GREY = "#7a7a7a"  # ejes y flechas (neutro, igual en todas las paletas)
+
+# Paleta activa: todas las figuras toman sus colores de aquí (ver palettes.py). configure() la cambia.
+_PAL = {"p": PAL.Palette("classic")}
+
+
+def pal() -> PAL.Palette:
+    return _PAL["p"]
+
+
+def col(role):
+    """Color de un papel de la paleta activa: primary, secondary, third, increase, decrease, neutral."""
+    return getattr(pal(), role)
+
+
+def cmap(name="seq"):
+    """Escala secuencial de la paleta activa («seq»: tono principal; «seq2»: secundario)."""
+    if name in ("seq", "seq2"):
+        ramp = getattr(pal(), name)
+        # escala continua: empieza casi en blanco (el cero se distingue del fondo por la rejilla de celdas) y
+        # sigue los 5 pasos validados del tono, de claro a oscuro
+        return LinearSegmentedColormap.from_list(f"bt_{name}", [PAL.tint(ramp[0], 0.97, 0.2)] + list(ramp))
+    return plt.get_cmap(name)
+
+
+def __getattr__(name):  # compatibilidad: F.BLUE, F.ORANGE, F.GREEN, F.RED y F.PALETTE siguen la paleta activa
+    m = {"BLUE": "primary", "ORANGE": "secondary", "GREEN": "third", "RED": "increase"}
+    if name in m:
+        return col(m[name])
+    if name == "PALETTE":
+        return list(pal().cat)
+    raise AttributeError(name)
+
+
 plt.rcParams.update({
     "font.family": "sans-serif", "font.sans-serif": ["Arial", "Helvetica", "Liberation Sans", "DejaVu Sans"],
     "font.size": 9, "axes.titlesize": 10, "axes.titleweight": "bold", "axes.labelsize": 9,
@@ -29,8 +65,10 @@ DOUBLE_COLUMN_IN = 175 / 25.4   # 175 mm: ancho de doble columna
 EXPORT = {"tiff": True, "cluster_shape": "hull"}
 
 
-def configure(tiff=True, cluster_shape="hull"):
+def configure(tiff=True, cluster_shape="hull", palette=None, variant=0):
     EXPORT.update(tiff=tiff, cluster_shape=cluster_shape)
+    if palette:
+        _PAL["p"] = PAL.Palette(palette, variant)
 
 
 def _save(fig, path):
@@ -120,8 +158,11 @@ def prisma(path, by_db, total, dups, unique, steps, final, final_biblio=None):
     ax.set_ylim(0.2, 9.8)
     ax.axis("off")
 
-    def box(x, y, w, h, text, fc="#eef4f8"):
-        ax.add_patch(FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0.05", fc=fc, ec=BLUE, lw=1))
+    P = pal()
+
+    def box(x, y, w, h, text, fc=None):
+        ax.add_patch(FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0.05", fc=fc or PAL.tint(P.primary, 0.97, 0.15),
+                                    ec=P.primary, lw=1))
         ax.text(x + w / 2, y + h / 2, text, ha="center", va="center", fontsize=8)
 
     def arrow(x1, y1, x2, y2):
@@ -129,7 +170,7 @@ def prisma(path, by_db, total, dups, unique, steps, final, final_biblio=None):
 
     src = "\n".join(f"{k}: n = {v:,}" for k, v in by_db.items())
     box(0.3, 8.2, 4.4, 1.4, f"Records identified\n{src}\nTotal: n = {total:,}")
-    box(5.6, 8.2, 4.1, 1.4, f"Duplicates removed\n(DOI / title + year)\nn = {dups:,}", "#fbeee6")
+    box(5.6, 8.2, 4.1, 1.4, f"Duplicates removed\n(DOI / title + year)\nn = {dups:,}", P.box_out)
     arrow(4.7, 8.9, 5.6, 8.9)
     box(0.3, 5.9, 4.4, 1.2, f"Unique records screened\nn = {unique:,}")
     arrow(2.5, 8.2, 2.5, 7.1)
@@ -137,19 +178,19 @@ def prisma(path, by_db, total, dups, unique, steps, final, final_biblio=None):
     kept = [(nm, n) for nm, n, k in steps if k == "kept" and n]
     mod = [(nm, n) for nm, n, k in steps if k == "modelling" and n]
     txt = "\n".join(wrap(f"{nm}: n = {n:,}", 36) for nm, n in exc) or "None"
-    box(5.6, 5.7, 4.1, 1.6, f"Records excluded\n{txt}", "#fbeee6")
+    box(5.6, 5.7, 4.1, 1.6, f"Records excluded\n{txt}", P.box_out)
     arrow(4.7, 6.5, 5.6, 6.5)
     ktxt = ("\nincluding records with field not available\n(kept by default):\n"
             + "\n".join(f"{nm}: n = {n:,}" for nm, n in kept)) if kept else ""
-    box(0.3, 3.2, 4.4, 1.9 if kept else 1.2, f"Bibliometric corpus\nn = {final_biblio:,}{ktxt}", "#e8f3ec")
+    box(0.3, 3.2, 4.4, 1.9 if kept else 1.2, f"Bibliometric corpus\nn = {final_biblio:,}{ktxt}", P.box_in)
     arrow(2.5, 5.9, 2.5, 5.1 if kept else 4.4)
     mtxt = "\n".join(wrap(f"{nm}: n = {n:,}", 36) for nm, n in mod) or "None"
-    box(5.6, 3.3, 4.1, 1.5, f"Not usable for topic modelling\n(kept in bibliometrics)\n{mtxt}", "#fbeee6")
+    box(5.6, 3.3, 4.1, 1.5, f"Not usable for topic modelling\n(kept in bibliometrics)\n{mtxt}", P.box_out)
     arrow(4.7, 4.1, 5.6, 4.1)
-    box(0.3, 0.6, 4.4, 1.2, f"Topic-modelling corpus\n(LDA and BERTopic)\nn = {final:,}", "#e8f3ec")
+    box(0.3, 0.6, 4.4, 1.2, f"Topic-modelling corpus\n(LDA and BERTopic)\nn = {final:,}", P.box_in)
     arrow(2.5, 3.2, 2.5, 1.8)
     for y, lab in [(8.9, "Identification"), (6.5, "Screening"), (2.6, "Included")]:
-        ax.text(-0.25, y, lab, rotation=90, ha="center", va="center", fontsize=9, color=BLUE,
+        ax.text(-0.25, y, lab, rotation=90, ha="center", va="center", fontsize=9, color=P.primary,
                 fontweight="bold")
     return _save(fig, path)
 
@@ -157,18 +198,19 @@ def prisma(path, by_db, total, dups, unique, steps, final, final_biblio=None):
 # ------------------------------------------------------- bibliometría
 def annual_production(path, ap):
     fig, ax = plt.subplots(figsize=(7, 3.4))
-    ax.bar(ap["Year"], ap["Articles"], color=BLUE, width=0.8, label="Articles")
+    ax.bar(ap["Year"], ap["Articles"], color=col("primary"), width=0.8, label="Articles")
     ax.set_xlabel("Year")
     ax.set_ylabel("Number of documents")
     if "MeanTCperYear" in ap:
         ax2 = ax.twinx()
-        ax2.plot(ap["Year"], ap["MeanTCperYear"], color=ORANGE, lw=1.5, label="Mean citations/year")
-        ax2.set_ylabel("Mean citations per year", color=ORANGE)
+        ax2.plot(ap["Year"], ap["MeanTCperYear"], color=col("secondary"), lw=1.5, label="Mean citations/year")
+        ax2.set_ylabel("Mean citations per year", color=col("secondary"))
         ax2.spines["top"].set_visible(False)
     return _save(fig, path)
 
 
-def barh(path, labels, values, title, xlabel, color=BLUE, n=15):
+def barh(path, labels, values, title, xlabel, color=None, n=15):
+    color = color or col("primary")
     labels, values = list(labels)[:n][::-1], list(values)[:n][::-1]
     fig, ax = plt.subplots(figsize=(6.5, 0.32 * len(labels) + 1))
     ax.barh([wrap(l, 45) for l in labels], values, color=color)
@@ -181,8 +223,8 @@ def barh(path, labels, values, title, xlabel, color=BLUE, n=15):
 def country_scp_mcp(path, cp):
     cp = cp.head(15).iloc[::-1]
     fig, ax = plt.subplots(figsize=(6.5, 0.32 * len(cp) + 1))
-    ax.barh(cp["Country"], cp["SCP"], color=BLUE, label="SCP (single-country)")
-    ax.barh(cp["Country"], cp["MCP"], left=cp["SCP"], color=ORANGE, label="MCP (multi-country)")
+    ax.barh(cp["Country"], cp["SCP"], color=col("primary"), label="SCP (single-country)")
+    ax.barh(cp["Country"], cp["MCP"], left=cp["SCP"], color=col("secondary"), label="MCP (multi-country)")
     ax.set_xlabel("Documents (corresponding author's country)")
     ax.legend(frameon=False, loc="lower right")
     return _save(fig, path)
@@ -204,13 +246,14 @@ def k_selection(path, t, chosen):
         y = t[m].values
         sd = t[m + " SD"].values if m + " SD" in t else None
         fine = t["Stage"].eq("fine").values if "Stage" in t else np.zeros(len(t), bool)
-        ax.plot(t["K"], y, color=BLUE, lw=1)
-        ax.scatter(t["K"][~fine], y[~fine], s=14, color=BLUE, zorder=3, label="coarse")
+        ax.plot(t["K"], y, color=col("primary"), lw=1)
+        ax.scatter(t["K"][~fine], y[~fine], s=14, color=col("primary"), zorder=3, label="coarse")
         if fine.any():
-            ax.scatter(t["K"][fine], y[fine], s=10, color=ORANGE, zorder=3, label="fine")
+            ax.scatter(t["K"][fine], y[fine], s=10, color=col("secondary"), zorder=3, label="fine")
         if sd is not None and np.isfinite(sd).any():
-            ax.fill_between(t["K"], y - np.nan_to_num(sd), y + np.nan_to_num(sd), color=BLUE, alpha=0.15, lw=0)
-        ax.axvline(chosen, color=RED, ls="--", lw=1)
+            ax.fill_between(t["K"], y - np.nan_to_num(sd), y + np.nan_to_num(sd), color=col("primary"), alpha=0.15,
+                            lw=0)
+        ax.axvline(chosen, color=col("neutral_dark"), ls="--", lw=1)
         ax.set_title(f"{m} ({d})" if d != "combined" else "Mean normalized score", fontsize=8)
         ax.tick_params(labelsize=7)
     for ax in axes[len(panels):]:
@@ -223,7 +266,8 @@ def k_selection(path, t, chosen):
     return _save(fig, path)
 
 
-def topic_words(path, weights, words, labels, title, color=BLUE, ncols=4, n=8):
+def topic_words(path, weights, words, labels, title, color=None, ncols=4, n=8):
+    """color=None: cada tema con su color categórico (el mismo que en el mapa de documentos)."""
     k = len(labels)
     nrows = int(np.ceil(k / ncols))
     fig, axes = plt.subplots(nrows, ncols, figsize=(2.5 * ncols, 2.3 * nrows))
@@ -235,7 +279,7 @@ def topic_words(path, weights, words, labels, title, color=BLUE, ncols=4, n=8):
             continue
         w = [str(x).replace("_", " ") for x in words[i][:n][::-1]]
         v = weights[i][:n][::-1]
-        ax.barh(w, v, color=color)
+        ax.barh(w, v, color=color or pal().color(i))
         ax.set_title(wrap(labels[i], 26), fontsize=7.5, linespacing=1.05)
         ax.tick_params(axis="y", labelsize=7)
         ax.tick_params(axis="x", labelsize=6)
@@ -245,11 +289,12 @@ def topic_words(path, weights, words, labels, title, color=BLUE, ncols=4, n=8):
     return _save(fig, path)
 
 
-def topic_heatmap_time(path, m, labels, title, cmap="Blues"):
+def topic_heatmap_time(path, m, labels, title, cmap_name="seq", **kw):
+    cm = cmap(kw.get("cmap", cmap_name))
     """m: DataFrame periodos x temas."""
     fig, ax = plt.subplots(figsize=(0.55 * m.shape[0] + 3.5, 0.3 * m.shape[1] + 1.2))
     data = m.T.values
-    im = ax.imshow(data, aspect="auto", cmap=cmap)
+    im = ax.imshow(data, aspect="auto", cmap=cm)
     ax.set_xticks(range(m.shape[0]), m.index, rotation=45, ha="right")
     ax.set_yticks(range(m.shape[1]), [wrap(l, 40) for l in labels], fontsize=7)
     fig.colorbar(im, ax=ax, label="Mean topic prevalence", shrink=0.7)
@@ -259,13 +304,12 @@ def topic_heatmap_time(path, m, labels, title, cmap="Blues"):
 
 def doc_map(path, xy, topics, labels, title):
     fig, ax = plt.subplots(figsize=(7, 6))
-    cmap = plt.get_cmap("tab20")
     out = topics < 0
-    ax.scatter(xy[out, 0], xy[out, 1], s=2, c="#d0d0d0", label="Outliers")
+    ax.scatter(xy[out, 0], xy[out, 1], s=2, c="#d9d9d9", label="Outliers")
     for t in range(len(labels)):
         m = topics == t
         if m.any():
-            ax.scatter(xy[m, 0], xy[m, 1], s=3, color=cmap(t % 20), alpha=0.7)
+            ax.scatter(xy[m, 0], xy[m, 1], s=3, color=pal().color(t), alpha=0.7)
             cx, cy = np.median(xy[m], axis=0)
             ax.text(cx, cy, labels[t].split(":")[0], fontsize=7.5, fontweight="bold",
                     bbox=dict(fc="white", ec="none", alpha=0.7, pad=0.5))
@@ -280,7 +324,7 @@ def similarity_heatmap(path, S, matches, title, null=None):
     """Coseno LDA × BERTopic; recuadro blanco = pareja húngara; punto = por encima del percentil 95 nulo del par
     (permutación); la línea discontinua en la barra de color marca el percentil 95 nulo global."""
     fig, ax = plt.subplots(figsize=(0.35 * S.shape[1] + 3, 0.32 * S.shape[0] + 1.5))
-    im = ax.imshow(S.values, cmap="viridis", vmin=0, vmax=max(S.values.max(), 0.5), aspect="auto")
+    im = ax.imshow(S.values, cmap=cmap("seq"), vmin=0, vmax=max(S.values.max(), 0.5), aspect="auto")
     if null is not None:
         ii, jj = np.where(S.values > null["p95_pair"])
         ax.scatter(jj, ii, s=6, c="white", marker="o", linewidths=0, zorder=3)
@@ -303,7 +347,7 @@ def similarity_heatmap(path, S, matches, title, null=None):
 def contingency(path, cont, title):
     P = cont.div(cont.sum(axis=1) + 1e-12, axis=0)
     fig, ax = plt.subplots(figsize=(0.35 * P.shape[1] + 3, 0.32 * P.shape[0] + 1.5))
-    im = ax.imshow(P.values, cmap="magma_r", aspect="auto", vmin=0, vmax=1)
+    im = ax.imshow(P.values, cmap=cmap("seq2"), aspect="auto", vmin=0, vmax=1)
     ax.set_xticks(range(P.shape[1]), P.columns, rotation=90, fontsize=7)
     ax.set_yticks(range(P.shape[0]), P.index, fontsize=7)
     ax.set_xlabel("BERTopic topic (document assignment)")
@@ -326,7 +370,7 @@ def trends(path, tl, tb, lda_labels, bert_labels):
     for ax, (t, labs, name) in zip(axes, panels):
         idx = np.where(t["Slope"].notna().values)[0]
         order = idx[np.argsort(t["Slope"].values[idx])]
-        cols = [RED if t["Trend"][i] == "Hot" else BLUE if t["Trend"][i] == "Cold" else "#bbbbbb"
+        cols = [col("increase") if t["Trend"][i] == "Hot" else col("decrease") if t["Trend"][i] == "Cold" else col("neutral")
                 for i in order]
         sl = t["Slope"].values[order] * 100
         err = None
@@ -340,7 +384,7 @@ def trends(path, tl, tb, lda_labels, bert_labels):
             ax.set_title(name)
         ax.set_xlabel("Slope of annual prevalence (×100) with 95% CI")
         ax.tick_params(axis="y", labelsize=6.5)
-    handles = [plt.Rectangle((0, 0), 1, 1, color=c_) for c_ in (RED, BLUE, "#bbbbbb")]
+    handles = [plt.Rectangle((0, 0), 1, 1, color=c_) for c_ in (col("increase"), col("decrease"), col("neutral"))]
     fig.legend(handles, ["Increasing (q < 0.05)", "Decreasing (q < 0.05)", "No significant trend"],
                loc="lower center", ncol=3, frameon=False, fontsize=7.5, bbox_to_anchor=(0.5, -0.01))
     fig.tight_layout(rect=(0, 0.05, 1, 1))
@@ -350,7 +394,7 @@ def trends(path, tl, tb, lda_labels, bert_labels):
 def strategic(path, sm, title):
     fig, ax = plt.subplots(figsize=(7, 5.5))
     x, y = sm["Growth (slope)"] * 100, sm["Impact (citations/year)"]
-    ax.scatter(x, y, s=60 + 3000 * sm["Prevalence"], color=BLUE, alpha=0.55, ec="white")
+    ax.scatter(x, y, s=60 + 3000 * sm["Prevalence"], color=col("primary"), alpha=0.55, ec="white")
     ax.axvline(0, color=GREY, lw=0.7, ls="--")
     ax.axhline(np.median(y), color=GREY, lw=0.7, ls="--")
     for xi, yi, l in zip(x, y, sm["Topic"]):
@@ -362,8 +406,7 @@ def strategic(path, sm, title):
 
 # ------------------------------------------------------ utilidades de estilo
 # Paleta Okabe-Ito (apta para daltónicos) ampliada
-PALETTE = ["#0072B2", "#E69F00", "#009E73", "#CC79A7", "#D55E00", "#56B4E9", "#F0E442", "#000000",
-           "#8C6BB1", "#66A61E", "#A6761D", "#E7298A", "#1B9E77", "#7570B3", "#999999"]
+
 
 
 def _halo(text_obj, w=2.5):
@@ -442,7 +485,7 @@ def network(path, nodes, edges, title, top_nodes=50, normalize="association", mi
         comms = [set(G)]
     comms = sorted(comms, key=lambda c: -sum(freq[n_] for n_ in c))
     cid = {n_: i for i, c in enumerate(comms) for n_ in c}
-    col = {n_: PALETTE[cid[n_] % len(PALETTE)] for n_ in G}
+    col = {n_: pal().color(cid[n_]) for n_ in G}
     # Fruchterman-Reingold con pesos normalizados
     smax = max(d["strength"] for *_, d in G.edges(data=True))
     for u, v, d in G.edges(data=True):
@@ -465,7 +508,7 @@ def network(path, nodes, edges, title, top_nodes=50, normalize="association", mi
         t = ax.text(x, y, n_, fontsize=fs, ha="center", va="center", zorder=4, color="#111111",
                     fontweight="bold" if s_ > np.percentile(sizes, 80) else "normal")
         t.set_path_effects([pe.withStroke(linewidth=1.2, foreground=(1, 1, 1, 0.7))])
-    handles = [Line2D([], [], marker="o", ls="", color=PALETTE[i % len(PALETTE)], markersize=7,
+    handles = [Line2D([], [], marker="o", ls="", color=pal().color(i), markersize=7,
                       label=f"Cluster {i + 1}: " + ", ".join(sorted(c, key=lambda n_: -freq[n_])[:2]))
                for i, c in enumerate(comms[:8])]
     ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.01), ncol=2, frameon=False,
@@ -514,13 +557,13 @@ def collaboration_map(path, production, edges, title, max_edges=60):
     prod = {_iso3(k): v for k, v in production.items() if _iso3(k)}
     cent = {c["iso3"]: (c["x"], c["y"]) for c in world}
     fig, ax = plt.subplots(figsize=(8, 4.4))
-    cmap = plt.get_cmap("Blues")
+    cm = cmap("seq")
     vmax = max(prod.values()) if prod else 1
     norm = LogNorm(vmin=1, vmax=max(vmax, 2))
     polys, colors = [], []
     for c in world:
         v = prod.get(c["iso3"], 0)
-        fc = cmap(0.15 + 0.85 * norm(v)) if v else "#eeeeee"
+        fc = cm(norm(v)) if v else "#eeeeee"
         for poly in c["polys"]:
             polys.append(np.array(poly[0]))
             colors.append(fc)
@@ -530,12 +573,12 @@ def collaboration_map(path, production, edges, title, max_edges=60):
     for a, b, w in top[::-1]:
         ia, ib = _iso3(a), _iso3(b)
         if ia in cent and ib in cent:
-            _curved_edge(ax, cent[ia], cent[ib], "#D55E00", lw=0.4 + 2.6 * (w / wmax),
+            _curved_edge(ax, cent[ia], cent[ib], col("secondary"), lw=0.4 + 2.6 * (w / wmax),
                          alpha=0.25 + 0.5 * (w / wmax), rad=0.2, z=3)
-    sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+    sm = plt.cm.ScalarMappable(norm=norm, cmap=cm)
     cb = fig.colorbar(sm, ax=ax, shrink=0.6, pad=0.01)
     cb.set_label("Documents (log scale)")
-    ax.add_line(Line2D([], [], color="#D55E00", lw=2, label=f"Top {len(top)} collaboration links"))
+    ax.add_line(Line2D([], [], color=col("secondary"), lw=2, label=f"Top {len(top)} collaboration links"))
     ax.legend(loc="lower left", frameon=False, fontsize=7.5)
     ax.set_xlim(-170, 190)
     ax.set_ylim(-58, 85)
@@ -713,7 +756,8 @@ def _place_labels(fig, ax, items, segs):
             moved.append((t, anchor, bb))
     return moved
 
-def biplot(path, hj, title=None, row_kind="period", col_clusters=None, row_clusters=None, row_color="#0072B2"):
+def biplot(path, hj, title=None, row_kind="period", col_clusters=None, row_clusters=None, row_color=None):
+    row_color = row_color or col("primary")
     """Vectores = temas (coloreados por conglomerado); puntos = periodos o países.
     Cada conglomerado se encierra con una sola forma (envolvente convexa o elipse) y las formas no se
     superponen. En periodos se dibuja la trayectoria cronológica. Sin título: va en la leyenda del manuscrito.
@@ -721,8 +765,8 @@ def biplot(path, hj, title=None, row_kind="period", col_clusters=None, row_clust
     R, Cs, lim = _biplot_geometry(hj)
     cc = col_clusters if col_clusters is not None else np.zeros(len(Cs), int)
     rc = row_clusters
-    gcol = [PALETTE[k % len(PALETTE)] for k in sorted(set(cc))] if col_clusters is not None else []
-    grow = [PALETTE[(k + 4) % len(PALETTE)] for k in sorted(set(rc))] if rc is not None else []
+    gcol = [pal().color(k) for k in sorted(set(cc))] if col_clusters is not None else []
+    grow = [pal().color(k + 4) for k in sorted(set(rc))] if rc is not None else []
     # Una sola familia de formas por figura: países si están agrupados; si no, temas
     groups, colors = (_groups(R, rc), grow) if rc is not None else (_groups(Cs, col_clusters), gcol)
     polys = _fit_shapes(groups, EXPORT["cluster_shape"], lim) if colors else None
@@ -739,7 +783,7 @@ def biplot(path, hj, title=None, row_kind="period", col_clusters=None, row_clust
         ax.plot(*np.vstack([poly, poly[:1]]).T, color=color, lw=0.9, ls="--", alpha=0.9, zorder=1)
     texts = []
     for i in range(len(Cs)):
-        color = PALETTE[cc[i] % len(PALETTE)]
+        color = pal().color(cc[i])
         ax.annotate("", xy=Cs[i], xytext=(0, 0), zorder=2,
                     arrowprops=dict(arrowstyle="-|>", color=color, lw=1.0, mutation_scale=8))
         # nombres en dos líneas como máximo, alineados hacia fuera de la punta del vector
@@ -755,7 +799,7 @@ def biplot(path, hj, title=None, row_kind="period", col_clusters=None, row_clust
             ax.annotate("", xy=R[i + 1], xytext=R[i], zorder=3,
                         arrowprops=dict(arrowstyle="-|>", color="#555555", lw=0, mutation_scale=9))
     for i, (x, y) in enumerate(R):
-        c = PALETTE[(rc[i] + 4) % len(PALETTE)] if rc is not None else row_color
+        c = pal().color(rc[i] + 4) if rc is not None else row_color
         ax.scatter(x, y, s=46, color=c, edgecolors="white", linewidths=0.8, zorder=4,
                    marker="s" if row_kind == "period" else "o")
         texts.append(_halo(ax.text(x, y, " " + str(hj.rows.index[i]), fontsize=7, color="#1a1a1a",
@@ -795,10 +839,10 @@ def biplot(path, hj, title=None, row_kind="period", col_clusters=None, row_clust
                             min(max(ax.transData.transform(anchor)[1], bb.y0), bb.y1)]])[0]
         ax.plot([anchor[0], c[0]], [anchor[1], c[1]], color="#999999", lw=0.4, zorder=2)
     if col_clusters is not None:
-        handles = [Line2D([], [], color=PALETTE[k % len(PALETTE)], lw=2.5, label=f"Topic cluster {k + 1}")
+        handles = [Line2D([], [], color=pal().color(k), lw=2.5, label=f"Topic cluster {k + 1}")
                    for k in sorted(set(cc))]
         if rc is not None:
-            handles += [Line2D([], [], marker="o", ls="", color=PALETTE[(k + 4) % len(PALETTE)], markersize=7,
+            handles += [Line2D([], [], marker="o", ls="", color=pal().color(k + 4), markersize=7,
                                label=f"Country cluster {k + 1}") for k in sorted(set(rc))]
         # leyenda debajo del gráfico para no tapar etiquetas
         ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.11 * 7.4 / (h + 0.9)),

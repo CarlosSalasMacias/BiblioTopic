@@ -1,6 +1,6 @@
 // BiblioTopic — interfaz (hilo principal). El trabajo pesado ocurre en js/worker.js.
 const $ = (id) => document.getElementById(id);
-const worker = new Worker(new URL("./worker.js?v=20261120", import.meta.url), { type: "module" });
+const worker = new Worker(new URL("./worker.js?v=20261121", import.meta.url), { type: "module" });
 const state = { analyses: {}, sections: {}, summary: null, labels: null, busy: false, aiLabels: false, aiModel: "" };
 
 const DEPENDS = { compare: ["lda", "bertopic"], inference: ["compare", "lda", "bertopic"], strategic: ["lda"],
@@ -98,6 +98,7 @@ function showSummary(s) {
     ${auditHtml(s.audit)}
     ${topKwHtml(s.top_keywords)}`;
   state.auditBlock = !!(s.audit && s.audit.critical_low.length);
+  if (s.palettes) { fillPalettes(s.palettes); showPalette(s.palette_auto); requestPalette(); }
   // la confirmación aparece también junto al botón «Ejecutar análisis»; ambas casillas están sincronizadas
   $("audit-gate").hidden = !state.auditBlock;
   syncAudit(false);
@@ -240,6 +241,54 @@ function nWorkers() {
 }
 $("o-workers").options[0].textContent = `Automático (${autoWorkers()})`;
 
+// ------------------------------------------------------------ paleta de colores de las figuras
+function paletteCfg() {
+  const v = $("o-palette").value;
+  if (v === "auto") return { palette: "auto", palette_variant: null };
+  const [key, variant] = v.split(":");
+  return { palette: key, palette_variant: Number(variant) };
+}
+function fillPalettes(list) {
+  state.palettes = list;
+  const sel = $("o-palette");
+  sel.innerHTML = `<option value="auto">Automática</option>` + list.map((p) =>
+    `<option value="${p.key}:0">${escH(p.name)} · A</option><option value="${p.key}:1">${escH(p.name)} · B</option>`).join("");
+}
+function showPalette(p) {
+  if (!p || !p.categorical) return;
+  if (p.auto) {
+    state.paletteAuto = p;
+    $("o-palette").options[0].textContent = `Automática — ${p.name} · ${p.variant ? "B" : "A"}`;
+  }
+  const cur = $("o-palette").value === "auto" ? state.paletteAuto || p : p;
+  $("pal-swatch").innerHTML = cur.categorical.map((c) => `<i style="background:${c}"></i>`).join("");
+  $("pal-note").textContent = $("o-palette").value === "auto"
+    ? `elegida por la temática (${cur.topic}); cámbiela si prefiere otra`
+    : `paleta para ${cur.topic}`;
+}
+function localPalette(v) {  // vista previa inmediata al elegir una paleta fija
+  const [key, variant] = v.split(":");
+  const p = (state.palettes || []).find((x) => x.key === key);
+  return p && { name: p.name, topic: p.topic, categorical: Number(variant) ? p.alt : p.cat, auto: false };
+}
+let palTimer = null;
+function requestPalette() {
+  clearTimeout(palTimer);
+  palTimer = setTimeout(() => {
+    if (state.loaded && !state.busy) worker.postMessage({ cmd: "palette_preview", cfg: { ...searchCfg(), query_terms: csv($("o-q").value), palette: "auto" } });
+  }, 500);
+}
+for (const id of ["q-scopus", "q-wos", "o-q"]) $(id).addEventListener("input", requestPalette);
+$("o-palette").addEventListener("change", (e) => {
+  const v = e.target.value;
+  showPalette(v === "auto" ? state.paletteAuto : localPalette(v));
+  if (state.hasResults && !state.busy) {  // con resultados: se vuelven a dibujar las figuras (sin repetir el análisis)
+    const pc = paletteCfg();
+    busy(true);
+    worker.postMessage({ cmd: "palette", key: pc.palette, variant: pc.palette_variant });
+  }
+});
+
 function buildCfg() {
   const analyses = checked("analyses");
   return {
@@ -261,6 +310,7 @@ function buildCfg() {
     tau_strong: num("o-tau"), tau_partial: num("o-taup"), trend_test: $("o-trend").value,
     period_mode: $("o-pmode").value, period_width: num("o-pw"), n_periods: num("o-np"), custom_periods: $("o-pcustom").value,
     min_df: num("o-mindf"), seed: num("o-seed"), cluster_shape: $("o-shape").value, n_workers: nWorkers(),
+    ...paletteCfg(),
     composite: $("m-comp").checked, export_tiff: $("m-tiff").checked, ...searchCfg(),
   };
 }
@@ -342,8 +392,14 @@ function showQuality(q) {
   $("quality").innerHTML = `<h3>Controles de calidad</h3><ul class="quality">${q.map((c) =>
     `<li class="${c.level}">${icon[c.level]} <b>${escH(c.check)}</b> — ${escH(c.detail)}</li>`).join("")}</ul>`;
 }
-function showResults({ figs, tables, labels, quality }) {
+function showResults({ figs, tables, labels, quality, palette, palettes }) {
   showQuality(quality);
+  state.hasResults = true;
+  if (!state.palettes && palettes) fillPalettes(palettes);
+  if (palette && palette.categorical) {
+    if (palette.auto) showPalette(palette);
+    else { $("o-palette").value = `${palette.key}:${palette.variant}`; showPalette(palette); }
+  }
   $("s-results").hidden = false;
   $("s-write").hidden = false;
   urls.forEach(URL.revokeObjectURL);
@@ -480,7 +536,7 @@ $("b-ai-translate").onclick = async () => {
   busy(true);
   toast("Traduciendo los nombres al inglés…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261120");
+    const ai = await import("./ai.js?v=20261121");
     const out = await ai.translateLabels(key, inputs.map((i) => i.value), $("m-topic").value.trim());
     out.forEach((t, i) => { if (inputs[i] && t) { setFull(inputs[i].closest(".lrow"), t); inputs[i].closest(".lrow").classList.remove("es"); } });
     state.aiLabels = true;
@@ -499,7 +555,7 @@ $("b-ai-short").onclick = async () => {
   busy(true);
   toast("Pidiendo nombres cortos a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261120");
+    const ai = await import("./ai.js?v=20261121");
     const out = await ai.shortenLabels(key, rows.map((r) => r.querySelector("input.full").value), $("m-topic").value.trim());
     out.forEach((t, i) => {
       const sh = rows[i] && rows[i].querySelector("input.short");
@@ -520,7 +576,7 @@ $("b-ai-labels").onclick = async () => {
   busy(true);
   toast("Pidiendo propuestas de nombres a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261120");
+    const ai = await import("./ai.js?v=20261121");
     const ctx = await getContext();
     const out = await ai.suggestLabels(key, ctx, $("m-topic").value.trim());
     const byId = Object.fromEntries(out.map((t) => [t.id, t]));
@@ -547,7 +603,7 @@ $("b-ai-disc").onclick = async () => {
   out.hidden = false;
   out.textContent = "Redactando la Discusión (puede tardar 1–3 minutos)…";
   try {
-    const ai = await import("./ai.js?v=20261120");
+    const ai = await import("./ai.js?v=20261121");
     const ctx = await getContext();
     const meta = { topic_name: $("m-topic").value.trim() };
     const text = await ai.draftDiscussion(key, ctx, meta, (snap) => { out.textContent = snap; });
@@ -607,7 +663,7 @@ $("b-ai-titles").onclick = async () => {
   busy(true);
   toast("Pidiendo propuestas de título a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261120");
+    const ai = await import("./ai.js?v=20261121");
     const ctx = await getContext();
     const out = await ai.suggestTitles(key, ctx, titleMeta());
     state.aiModel = ai.MODEL;
@@ -686,6 +742,9 @@ worker.onmessage = ({ data: m }) => {
       break;
     case "estimate":
       showEstimate(m.estimate);
+      break;
+    case "palette":
+      showPalette(m.palette);
       break;
     case "prepared":
       $("pmsg").textContent = `${(m.prep.bibliometric_documents ?? m.prep.documents).toLocaleString()} documentos en el corpus bibliométrico · `

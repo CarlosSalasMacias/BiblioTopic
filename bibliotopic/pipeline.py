@@ -19,6 +19,7 @@ from . import biblio, citations as CIT, compare, evolution as EVO, figures as F,
 from . import stats as ST
 from .bert_model import BERTResult
 from .hjbiplot import HJBiplot, make_periods, make_periods_mode
+from . import palettes as PAL
 from .lda_model import JobBroker, LDAResult, NeedJobs, corpus_payload, run_job_spec, select_k
 from .text import Corpus
 
@@ -52,7 +53,7 @@ BASE = dict(
     trend_test="mann_kendall", alpha=0.05, umap_metric="cosine", umap_neighbors=15, umap_components=5,
     umap_min_dist=0.0, embedding_model="Xenova/all-MiniLM-L6-v2",
     search_scopus="", search_wos="", search_date="", wos_indexes=[],
-    export_tiff=True, cluster_shape="hull", composite=True,
+    export_tiff=True, cluster_shape="hull", composite=True, palette="auto", palette_variant=None,
 )
 
 # Perfiles. «publication» es el valor por defecto y está pensado para artículos en revistas Q1.
@@ -207,6 +208,7 @@ class Session:
     # ------------------------------------------------------------- 1. datos
     def load(self, files):
         """files: lista de (nombre, bytes). Devuelve un resumen para la interfaz."""
+        self._kw_cache = None
         self.frames, fmts, errors = [], {}, []
         expanded = []
         self._zip_members = {}
@@ -249,11 +251,38 @@ class Session:
             "languages": m["LA"][m["LA"] != ""].value_counts().to_dict(),
             "audit": self.audit,
             "top_keywords": self.top_keywords(50),
+            "palette_auto": self.palette_choice({}),
+            "palettes": PAL.catalogue(),
             "input_files": self.input_meta,
             # registros sin dato de idioma o tipo, por base de origen (no son «otros idiomas»)
             "unknown": {f: {r["Source"]: int(r["Unknown"]) for _, r in bio.status_by_db(m, f).iterrows()
                             if r["Unknown"]} for f in ("LA", "DT")},
         }
+
+    # ------------------------------------------------------------ paleta de colores
+    def palette_choice(self, cfg) -> dict:
+        """Paleta efectiva: automática (según las ecuaciones/términos de búsqueda y las palabras clave más
+        frecuentes) o la elegida por el usuario. La variante depende del corpus si no se fija."""
+        cfg = cfg or {}
+        q = [cfg.get("search_scopus", ""), cfg.get("search_wos", ""), " ".join(cfg.get("query_terms") or [])]
+        if getattr(self, "_kw_cache", None) is None:
+            self._kw_cache = self.top_keywords(50)["keywords"]
+        kws = [k for k, _ in self._kw_cache]
+        wts = [w for _, w in self._kw_cache]
+        key, variant, scores = PAL.choose(q, kws, wts)
+        auto = (cfg.get("palette") or "auto") == "auto"
+        if not auto:
+            key = cfg["palette"] if cfg["palette"] in PAL.PALETTES else "classic"
+        if cfg.get("palette_variant") not in (None, ""):
+            variant = int(cfg["palette_variant"])
+        p = PAL.Palette(key, variant)
+        return {**p.info(), "auto": auto, "topic": PAL.PALETTES[p.key]["topic"], "scores": scores}
+
+    def set_palette(self, key="auto", variant=None) -> dict:
+        """Cambia la paleta después del análisis (solo se vuelven a dibujar las figuras)."""
+        self.cfg["palette"], self.cfg["palette_variant"] = key or "auto", variant
+        self.palette = self.palette_choice(self.cfg)
+        return self.palette
 
     def top_keywords(self, n=50, synonyms_text=""):
         """Palabras clave más frecuentes tras la normalización automática (y los sinónimos, si se indican), para
@@ -321,7 +350,9 @@ class Session:
             c["query_terms_source"] = "search equations"
         elif c["query_terms"]:
             c.setdefault("query_terms_source", "user")
-        F.configure(tiff=bool(c["export_tiff"]), cluster_shape=c["cluster_shape"])
+        self.palette = self.palette_choice(c)
+        F.configure(tiff=bool(c["export_tiff"]), cluster_shape=c["cluster_shape"],
+                    palette=self.palette["key"], variant=self.palette["variant"])
         dfb, dfm, self.excl_steps = bio.apply_filters(
             self.merged, c["year_min"], c["year_max"], c["doc_types"], c["languages"],
             keep_unknown_type=c["keep_unknown_type"], keep_unknown_language=c["keep_unknown_language"],
@@ -523,7 +554,9 @@ class Session:
         import gzip
         import pickle
         s = pickle.loads(gzip.decompress(raw))
-        F.configure(tiff=bool(s.cfg.get("export_tiff", True)), cluster_shape=s.cfg.get("cluster_shape", "hull"))
+        pal = getattr(s, "palette", None) or {}
+        F.configure(tiff=bool(s.cfg.get("export_tiff", True)), cluster_shape=s.cfg.get("cluster_shape", "hull"),
+                    palette=pal.get("key", "classic"), variant=pal.get("variant", 0))
         return s
 
     def validation_sheet(self) -> bytes:
@@ -618,8 +651,10 @@ class Session:
     # ----------------------------------------------------------- 5. salidas
     def render(self, out_dir="/out", final=False):
         """final=False: vista rápida (PNG + PDF). final=True: además TIFF 600 dpi y figuras compuestas."""
+        pal = getattr(self, "palette", None) or {}
         F.configure(tiff=bool(final and self.cfg.get("export_tiff", True)),
-                    cluster_shape=self.cfg.get("cluster_shape", "hull"))
+                    cluster_shape=self.cfg.get("cluster_shape", "hull"),
+                    palette=pal.get("key", "classic"), variant=pal.get("variant", 0))
         self.final = final
         out = Path(out_dir)
         (out / "figures").mkdir(parents=True, exist_ok=True)
@@ -711,7 +746,8 @@ class Session:
             T["T6_LDA_topics"] = lda.topic_table()
             FIG["lda_words"] = F.topic_words(fp("Fig09_LDA_topics.png"),
                                              [np.sort(r)[::-1] for r in lda.beta], lda.top10,
-                                             self._fig_labels(lda), "LDA topics: top terms (word probability)")
+                                             self._fig_labels(lda), "LDA topics: top terms (word probability)",
+                                             color=F.col("primary"))  # un color: los colores por tema son de BERTopic
             ml = pd.DataFrame(lda.theta, columns=lda.labels).groupby(periods.values).mean().reindex(plabels)
             T["lda_by_period"] = ml.round(4).reset_index(names="Period")
             X["ml"] = ml
@@ -729,8 +765,7 @@ class Session:
             T["T7_BERTopic_topics"] = bert.topic_table()
             FIG["bert_words"] = F.topic_words(fp("Fig12_BERTopic_topics.png"),
                                               [np.sort(r)[::-1] for r in bert.ctfidf], bert.top10,
-                                              self._fig_labels(bert), "BERTopic topics: top terms (c-TF-IDF)",
-                                              color=F.ORANGE)
+                                              self._fig_labels(bert), "BERTopic topics: top terms (c-TF-IDF)")
             if bert.xy is not None:
                 FIG["bert_map"] = F.doc_map(fp("Fig13_BERTopic_document_map.png"), bert.xy,
                                             bert.topics_raw, bert.labels,
@@ -740,7 +775,7 @@ class Session:
             if self.on("temporal"):
                 FIG["bert_time"] = F.topic_heatmap_time(fp("Fig14_BERTopic_topics_by_period.png"), mb,
                                                         self._fig_labels(bert), "BERTopic topic prevalence by period",
-                                                        cmap="Oranges")
+                                                        cmap="seq2")
             if self.on("hjbiplot") and mb.dropna().shape[0] >= 3:
                 hj = HJBiplot(mb.rename(columns=dict(zip(bert.labels, self._bip_names(bert)))))
                 hj.col_clusters, hj.k_cols, hj.sil_cols = F.biplot_clusters(hj)[:3]
@@ -988,6 +1023,7 @@ class Session:
                        "wos_indexes": c.get("wos_indexes", []),
                        "query_terms": c.get("query_terms", []), "query_terms_source": c.get("query_terms_source", "")},
             "field_availability_by_database": audit["by_db"] if audit else None,
+            "figure_palette": {k: v for k, v in (getattr(self, "palette", None) or {}).items() if k != "scores"},
             "parameters": c,
             "seeds": self.seed_registry() if not cfg and (self.lda is not None or self.bert is not None)
             else planned_seeds(c, self.n_umap_runs() if not cfg else 1 + (c["n_stab_bert"] if "stability" in c["analyses"] else 0)),
