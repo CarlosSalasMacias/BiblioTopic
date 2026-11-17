@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BiblioTopic</title>
 <meta name="description" content="Bibliometría, LDA, BERTopic y HJ-Biplot sobre corpus de Web of Science y Scopus, con borrador de Métodos y Resultados.">
-<link rel="stylesheet" href="css/style.css?v=20261121">
+<link rel="stylesheet" href="css/style.css?v=20261124">
 </head>
 <body>
 <header>
@@ -79,6 +79,7 @@
       <label class="btnlike">Abrir proyecto guardado
         <input type="file" id="f-project" accept=".bibliotopic" hidden disabled></label>
     </div>
+    <div id="recover" class="warn" hidden></div>
     <div id="summary" hidden></div>
   </section>
 
@@ -177,9 +178,17 @@
     <p class="hint">El script ejecuta el mismo análisis en Python en su computadora (con varios núcleos en paralelo),
       útil para el perfil Publicación con corpus grandes.</p>
     <div id="run-status" hidden>
+      <div class="total" id="total-box" hidden>
+        <div class="total-head"><b id="tot-pct">0 %</b> <span>del análisis completo</span>
+          <span id="tot-eta" class="tot-eta"></span></div>
+        <div class="bar big"><div id="bar-total"></div></div>
+        <p id="tot-clock" class="hint"></p>
+      </div>
       <p id="stage" class="stage"></p>
       <div class="bar"><div id="bar"></div></div>
       <p id="pmsg" class="pmsg"></p>
+      <div id="watchdog" class="warn err" hidden></div>
+      <p id="timings" class="hint" hidden></p>
     </div>
   </section>
 
@@ -268,6 +277,6 @@
 </main>
 <footer class="wrap">BiblioTopic · código abierto en
   <a href="https://github.com/CarlosSalasMacias/BiblioTopic">GitHub</a> · Diseñado por Carlos Salas-Macías &amp; Karime Montes-Escobar</footer>
-<script type="module" src="js/app.js?v=20261121"></script>
+<script type="module" src="js/app.js?v=20261124"></script>
 </body>
 </html>

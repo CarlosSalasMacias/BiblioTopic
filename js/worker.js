@@ -10,7 +10,36 @@ const TRANSFORMERS_URL = "https://cdn.jsdelivr.net/npm/@huggingface/transformers
 
 let py = null;
 const post = (type, data = {}, transfer = []) => self.postMessage({ type, ...data }, transfer);
-const progress = (p, msg) => post("progress", { p, msg });
+// Progreso total del análisis: cada etapa pesa lo que se estima que tarda (S.run_plan); el avance dentro de la
+// etapa viene de sus propios mensajes. El tiempo restante se corrige con la velocidad observada en este equipo.
+let TRACK = null;
+function trackStart(plan) {
+  const order = ["prep", "lda", "embed", "umap", "cluster", "render"];
+  const w = {};
+  for (const k of order) w[k] = Math.max(0, Number(plan[k]) || 0);
+  TRACK = { w, total: Object.values(w).reduce((a, b) => a + b, 0) || 1, done: 0, cur: null, frac: 0,
+    t0: Date.now(), stageT0: Date.now(), timings: {} };
+}
+function trackStage(key) {
+  if (!TRACK) return;
+  if (TRACK.cur) {
+    TRACK.done += TRACK.w[TRACK.cur] || 0;
+    TRACK.timings[TRACK.cur] = (TRACK.timings[TRACK.cur] || 0) + (Date.now() - TRACK.stageT0) / 1000;
+  }
+  TRACK.cur = key; TRACK.frac = 0; TRACK.stageT0 = Date.now();
+}
+function trackOverall(p) {
+  if (!TRACK || !TRACK.cur) return null;
+  TRACK.frac = Math.max(TRACK.frac, Math.min(1, p || 0));
+  const overall = Math.min(0.995, (TRACK.done + (TRACK.w[TRACK.cur] || 0) * TRACK.frac) / TRACK.total);
+  const elapsed = (Date.now() - TRACK.t0) / 1000;
+  const estRemaining = TRACK.total * (1 - overall);
+  // con más del 10 % hecho, se usa la velocidad real (mezclada con la estimación al principio)
+  const a = Math.min(1, Math.max(0, (overall - 0.03) / 0.2));
+  const observed = overall > 0.03 ? elapsed * (1 - overall) / overall : estRemaining;
+  return { overall, elapsed, remaining: a * observed + (1 - a) * estRemaining };
+}
+const progress = (p, msg) => post("progress", { p, msg, total: trackOverall(p) });
 
 // Generador pseudoaleatorio con semilla (mulberry32) para UMAP reproducible
 function rng(seed) {
@@ -121,11 +150,12 @@ function cosineDist(a, b) {
 async function umap(rows, nComponents, minDist, seed, label, opts = {}) {
   const u = new UMAP({ nComponents, nNeighbors: opts.nNeighbors || 15, minDist, random: rng(seed),
     ...(opts.metric === "cosine" ? { distanceFn: cosineDist } : {}) });
+  (opts.onProgress || progress)(0, `${label}: grafo de vecinos (${rows.length.toLocaleString()} documentos)…`);
   const nEpochs = u.initializeFit(rows);
   for (let i = 0; i < nEpochs; i++) {
     u.step();
     if (i % 25 === 0) {
-      progress(i / nEpochs, `${label}: época ${i} / ${nEpochs}`);
+      (opts.onProgress || progress)(i / nEpochs, `${label}: época ${i} / ${nEpochs}`);
       await new Promise((r) => setTimeout(r, 0));
     }
   }
@@ -150,7 +180,7 @@ class LdaPool {
     });
     const tries = [];
     for (let i = 0; i < this.n; i++) {
-      tries.push(boot(new Worker(new URL("./lda_worker.js?v=20261121", import.meta.url), { type: "module" })));
+      tries.push(boot(new Worker(new URL("./lda_worker.js?v=20261124", import.meta.url), { type: "module" })));
     }
     const res = await Promise.allSettled(tries);
     this.workers = res.filter((r) => r.status === "fulfilled").map((r) => r.value);
@@ -254,9 +284,11 @@ async function run(cfg) {
   const prep = JSON.parse(await callPy(
     "json.dumps(S.prepare(json.loads(_cfg)), ensure_ascii=False, default=str)", { _cfg: JSON.stringify(cfg) }));
   post("prepared", { prep });
+  trackStart(JSON.parse(py.runPython("json.dumps(S.run_plan())")));
   const on = (a) => cfg.analyses.includes(a);
   const pyProgress = (p, m) => progress(p, m);
   if (on("lda")) {
+    trackStage("lda");
     stage("LDA: selección de K y modelo final");
     const pool = await poolP;
     if (pool) {
@@ -270,6 +302,7 @@ async function run(cfg) {
     (await poolP)?.terminate();
   }
   if (on("bertopic")) {
+    trackStage("embed");
     stage("BERTopic: embeddings de los documentos");
     const texts = py.runPython("S.texts()").toJs();
     const emb = await embed(texts, cfg.embedding_model);
@@ -278,14 +311,19 @@ async function run(cfg) {
     const us = JSON.parse(py.runPython("json.dumps(S.umap_settings())"));
     const runs = us.seeds.length;
     const reduced = [];
+    trackStage("umap");
+    const umapProg = (r) => (p, m) => progress((r + p) / (runs + 1), m);  // avance de todas las proyecciones
     for (let r = 0; r < runs; r++) {
       stage(`BERTopic: UMAP ${r + 1} de ${runs}${r ? " (estabilidad)" : ""}`);
       reduced.push(await umap(rows, us.n_components, us.min_dist, us.seeds[r], `UMAP ${r + 1}/${runs}`,
-        { metric: us.metric, nNeighbors: us.n_neighbors }));
+        { metric: us.metric, nNeighbors: us.n_neighbors, onProgress: umapProg(r) }));
     }
     stage("BERTopic: mapa 2D de documentos");
-    const xy = await umap(rows, 2, us.map_2d.min_dist, us.map_2d.seed, "UMAP 2D", { metric: us.metric, nNeighbors: us.n_neighbors });
+    const xy = await umap(rows, 2, us.map_2d.min_dist, us.map_2d.seed, "UMAP 2D",
+      { metric: us.metric, nNeighbors: us.n_neighbors, onProgress: umapProg(runs) });
+    trackStage("cluster");
     stage("BERTopic: HDBSCAN y c-TF-IDF");
+    progress(0.05, "Agrupando los documentos (HDBSCAN) y extrayendo los términos de cada tema…");
     py.globals.set("_red", reduced);
     py.globals.set("_xy", xy);
     py.globals.set("_emb_name", emb.name);
@@ -298,13 +336,26 @@ _bt = S.run_bertopic(_reds, _xy2, _emb_name)
     const bt = JSON.parse(py.runPython("json.dumps(_bt)"));
     if (bt.warning) post("warn", { msg: bt.warning });
   }
+  // punto de control: los modelos ya están ajustados; si algo falla al generar las figuras, el proyecto
+  // guardado permite repetir solo esta última etapa
+  try {
+    progress(1, "Guardando un punto de control del análisis…");
+    const bytes = pyBytes(await py.runPythonAsync("S.save_project()"));
+    post("checkpoint", { data: bytes }, [bytes.buffer]);
+  } catch (e) { /* el punto de control es opcional */ }
+  trackStage("render");
   stage("Generando figuras y tablas");
-  await render();
-  post("done", { elapsed: (Date.now() - t0) / 1000 });
+  progress(0.01, "Preparando figuras y tablas…");
+  await render(true);
+  trackStage(null);
+  post("done", { elapsed: (Date.now() - t0) / 1000, timings: TRACK ? TRACK.timings : null });
+  TRACK = null;
 }
 
-async function render() {
-  const figs = JSON.parse(await py.runPythonAsync("json.dumps(S.render('/out'))"));
+async function render(withProgress = false) {
+  py.globals.set("_rprog", (p, m) => progress(p, m));
+  const figs = JSON.parse(await py.runPythonAsync(
+    withProgress ? "json.dumps(S.render('/out', progress=lambda p, m: _rprog(p, m)))" : "json.dumps(S.render('/out'))"));
   const out = [];
   const transfer = [];
   for (const f of figs) {

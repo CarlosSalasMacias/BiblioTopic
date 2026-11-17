@@ -76,6 +76,15 @@ modelo convergido (coseno medio 0.44–0.55) y su NPMI es mucho menor (0.03–0.
 perfil «Exploración rápida» usa ahora batch con 30 iteraciones (coseno 0.99 con el modelo convergido) y conviene
 repetir con la versión 2 los análisis hechos con la versión 1.
 
+### Corrección: la última etapa se quedaba bloqueada en el navegador
+
+| Cambio | Justificación |
+|---|---|
+| El bootstrap de la coherencia NPMI y de la concordancia ARI/NMI se calcula con pesos por documento (veces que sale cada documento en la réplica) sobre matrices dispersas, en lugar de copiar y multiplicar matrices densas en cada réplica. Los resultados son idénticos (comprobado: mismas estimaciones e intervalos; ARI/NMI iguales a scikit-learn hasta 10⁻¹⁶). | En Python nativo la multiplicación densa usa BLAS optimizado y tarda segundos, pero el navegador no lo tiene: con ~7 600 documentos y 1000 réplicas, «Generando figuras y tablas» pasaba de ~1 min a más de 30 min y, en portátiles, parecía bloqueado. Ahora es ~30 veces más rápido también en Python. |
+| Barra de **progreso total** con tiempo transcurrido y **tiempo restante** (estimado al empezar y corregido con la velocidad real del equipo); avance dentro de la última etapa (figura a figura, permutaciones, bootstrap). | Antes solo se veía el avance de la etapa actual y la última etapa no informaba nada. |
+| **Punto de control automático** al terminar LDA y BERTopic (se guarda en el navegador). Si algo falla después, al recargar la página aparece «Recuperar el último análisis», que solo repite las figuras y tablas. | Un fallo al final ya no obliga a repetir horas de modelado. |
+| Aviso si el análisis no informa avances durante 10 min, errores visibles en el panel de progreso y **tiempo por etapa** al terminar. | Distinguir un análisis lento de uno detenido. |
+
 ### Paleta de colores de las figuras
 
 | Cambio | Justificación |

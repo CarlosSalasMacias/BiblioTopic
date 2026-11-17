@@ -75,6 +75,8 @@ def _save(fig, path):
     """Escala la figura a doble columna (175 mm) y guarda PNG 300 dpi (Word), PDF vectorial y TIFF 600 dpi."""
     w, h = fig.get_size_inches()
     fig.set_size_inches(DOUBLE_COLUMN_IN, h * DOUBLE_COLUMN_IN / w)
+    if EXPORT.get("on_save"):
+        EXPORT["on_save"](path)
     fig.savefig(path, dpi=DPI)
     base = str(path).rsplit(".", 1)[0]
     try:

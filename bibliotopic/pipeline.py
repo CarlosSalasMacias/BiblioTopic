@@ -127,18 +127,24 @@ def estimate_runtime(n_docs: int, cfg: dict, nnz_per_doc: float = 70.0, browser:
             lda_s += (rounds(len(ks) * c["k_seeds"]) + rounds(n_fine * c["k_seeds"])) * f
         kf = c.get("k") or 15
         lda_s += rounds(1 + (c["n_stab_lda"] if "stability" in on else 0)) * fit(kf, c["lda_max_iter"])
-    bert_s = 0.0
+    bert_s = emb_s = umap_s = clus_s = 0.0
     if "bertopic" in on:
         runs = 2 + (c["n_stab_bert"] if "stability" in on else 0)
-        bert_s = n_docs * (0.012 if "MiniLM" in c["embedding_model"] else 0.06)  # embeddings
-        bert_s += runs * (1.3 * n_docs / 1000 + 3 * n_docs / 1000)  # UMAP (JS) + HDBSCAN (Pyodide)
-    other = 60 + n_docs * 0.01 + (c["n_boot"] / 1000) * n_docs * 0.004
+        emb_s = n_docs * (0.012 if "MiniLM" in c["embedding_model"] else 0.06)  # embeddings
+        umap_s = runs * 2.0 * n_docs / 1000   # UMAP (JS): ~2 s por cada 1 000 documentos y proyección
+        clus_s = runs * 0.15 * n_docs / 1000  # HDBSCAN y c-TF-IDF (Pyodide)
+        bert_s = emb_s + umap_s + clus_s
+    # figuras, tablas, permutaciones y bootstrap (medido en el navegador: ~40 s con 7 600 documentos)
+    other = 5 + n_docs * 0.0013 + (c["n_boot"] / 1000) * n_docs * 0.0002
     factor = BROWSER_FACTOR if browser else 1.0
     lda_factor = (BROWSER_FACTOR_SERIAL if workers == 1 else BROWSER_FACTOR) if browser else 1.0
     total = lda_factor * lda_s + bert_s + factor * other
     return {"minutes": round(total / 60, 1), "lda_minutes": round(lda_factor * lda_s / 60, 1),
             "bertopic_minutes": round(bert_s / 60, 1), "profile": c["profile"], "browser": browser,
-            "n_workers": workers}
+            "n_workers": workers,
+            # segundos estimados por etapa (barra de progreso total y tiempo restante)
+            "parts": {"prep": 10.0 * factor, "lda": lda_factor * lda_s, "embed": emb_s, "umap": umap_s,
+                      "cluster": clus_s, "render": factor * other}}
 
 
 def planned_seeds(c: dict, umap_runs: int) -> dict:
@@ -333,6 +339,11 @@ class Session:
         if not any(o["level"] in ("red", "amber") for o in out):
             add("green", "Sin alertas", "Todos los controles se superaron.")
         return out
+
+    def run_plan(self):
+        """Segundos estimados por etapa para el análisis que se va a ejecutar (tras prepare)."""
+        nnz = float(self.corpus.X.nnz) / max(1, self.corpus.X.shape[0]) if getattr(self, "corpus", None) is not None else 70.0
+        return estimate_runtime(len(self.df), {**self.cfg}, nnz_per_doc=nnz, browser=True)["parts"]
 
     def estimate(self, cfg, n_docs=None):
         n = n_docs or int((self.merged["AB"].str.split().str.len().fillna(0) >= 20).sum())
@@ -649,8 +660,17 @@ class Session:
         self.ai.update({k: v for k, v in texts.items() if v})
 
     # ----------------------------------------------------------- 5. salidas
-    def render(self, out_dir="/out", final=False):
-        """final=False: vista rápida (PNG + PDF). final=True: además TIFF 600 dpi y figuras compuestas."""
+    def render(self, out_dir="/out", final=False, progress=None):
+        """final=False: vista rápida (PNG + PDF). final=True: además TIFF 600 dpi y figuras compuestas.
+        progress(p, msg): avance aproximado (figuras guardadas y pasos de cálculo largos)."""
+        expected = 30 + (4 if final else 0)
+        ticks = [0]
+
+        def tick(msg):
+            ticks[0] += 1
+            if progress:
+                progress(min(0.98, ticks[0] / expected), msg)
+        F.EXPORT["on_save"] = (lambda path: tick(f"Figura {ticks[0] + 1}: {Path(path).stem}")) if progress else None
         pal = getattr(self, "palette", None) or {}
         F.configure(tiff=bool(final and self.cfg.get("export_tiff", True)),
                     cluster_shape=self.cfg.get("cluster_shape", "hull"),
@@ -816,6 +836,7 @@ class Session:
             X["trend_year_range"] = tr0.attrs.get("years")
 
         if lda is not None and bert is not None and self.on("compare"):
+            tick(f"Comparación LDA–BERTopic ({int(c.get('n_perm') or 0)} permutaciones)")
             C = compare.compare(lda, bert, df["PY"], c["min_docs_year"], c["tau_strong"],
                                 c["tau_partial"], excl, titles=df["TI"].values, n_perm=int(c.get("n_perm") or 0),
                                 seed=int(c["seed"]) + 7, trend_test=c["trend_test"], alpha=c["alpha"],
@@ -861,6 +882,7 @@ class Session:
 
         # ---- inferencia estadística
         if C is not None and self.on("inference"):
+            tick(f"Inferencia: bootstrap ({int(c['n_boot'])} réplicas)")
             inf_t, inf = ST.inference_table(self.corpus, lda, bert, B=int(c["n_boot"]), seed=c["seed"],
                                             method=c.get("boot_method", "percentile"))
             T["T8b_inference"] = inf_t
@@ -881,6 +903,7 @@ class Session:
                     cb = CIT.cited_by_topic(df, bert.topics, bert.ids, bert.labels, 2)
                     T["cited_by_topic_BERTopic"] = cb.drop(columns=["_row"])
             if self.availability.get("CR", 0) > 0.3:
+                tick("Co-citación y acoplamiento bibliográfico")
                 nodes, edges, ctab = CIT.cocitation(dfb, 40)
                 T["T13_cocited_references"] = ctab
                 comms = F.network(fp("Fig21_cocitation_network.png"), nodes, edges, "Co-citation network",
@@ -970,6 +993,9 @@ class Session:
         rc["quality_checks"] = self.quality_checks()
         (out / "run_config.json").write_text(json.dumps(rc, indent=2, default=str, ensure_ascii=False),
                                              encoding="utf-8")
+        F.EXPORT["on_save"] = None
+        if progress:
+            progress(1.0, "Figuras y tablas listas")
         return [{"key": k, "path": v} for k, v in FIG.items()]
 
     def table_json(self, name, n=50):

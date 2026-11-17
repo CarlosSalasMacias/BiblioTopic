@@ -135,3 +135,11 @@ button.ai { border-color: #8C6BB1; color: #8C6BB1; }
 .palette-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 10px; }
 .swatch { display: inline-flex; gap: 2px; }
 .swatch i { display: inline-block; width: 16px; height: 16px; border-radius: 3px; }
+
+.total { margin: 6px 0 12px; }
+.total-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; margin-bottom: 4px; }
+.total-head b { font-size: 22px; }
+.tot-eta { color: var(--muted); }
+.bar.big { height: 14px; border-radius: 7px; }
+#recover { margin-top: 10px; }
+#recover button { margin: 0 6px; }

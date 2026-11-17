@@ -74,30 +74,62 @@ def bootstrap_coherence(corpus, models: dict, B=1000, seed=42, topn=10, method="
     95 %. Se informa también la media bootstrap, rotulada como tal."""
     words = sorted({w for tw in models.values() for t in tw for w in t[:topn] if w in corpus.word_index})
     col = {w: i for i, w in enumerate(words)}
-    Xb = corpus.Xbin[:, [corpus.word_index[w] for w in words]].toarray().astype(np.float32)
-    pairs = {}
+    # Matriz binaria documento × palabra (dispersa) y, para cada par de palabras necesario, la indicadora de
+    # «el documento contiene ambas». Un remuestreo bootstrap equivale a pesos w (veces que sale cada documento):
+    # frecuencias = Xs.T @ w y co-ocurrencias = P.T @ w. Es exactamente el mismo cálculo que remuestrear filas,
+    # pero sin multiplicar matrices densas (lento en el navegador, que no tiene BLAS optimizado).
+    Xs = corpus.Xbin[:, [corpus.word_index[w] for w in words]].tocsc().astype(np.float64)
+    pairs, plist, pidx = {}, [], {}
     for name, tw in models.items():
         pairs[name] = []
         for t in tw:
             ids = [col[w] for w in t[:topn] if w in col]
-            pairs[name].append([(ids[i], ids[j]) for i in range(len(ids)) for j in range(i + 1, len(ids))])
-    point = {name: float(np.nanmean(_npmi_matrix(Xb, pairs[name]))) for name in models}
+            tp = []
+            for i in range(len(ids)):
+                for j in range(i + 1, len(ids)):
+                    key = (ids[i], ids[j])
+                    if key not in pidx:
+                        pidx[key] = len(plist)
+                        plist.append(key)
+                    tp.append(pidx[key])
+            pairs[name].append(np.array(tp, int))
+    pa = np.array([p[0] for p in plist], int)
+    pb = np.array([p[1] for p in plist], int)
+    P = (Xs[:, pa].multiply(Xs[:, pb])).tocsc() if len(plist) else None
+    XsT, PT = Xs.T.tocsr(), (P.T.tocsr() if P is not None else None)
+
+    def npmi_means(w, n):
+        """NPMI medio de cada modelo con pesos por documento w (n = suma de pesos)."""
+        df = XsT @ w
+        co = PT @ w if PT is not None else np.zeros(0)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            pij = co / n
+            v = np.log(pij / ((df[pa] / n) * (df[pb] / n))) / -np.log(pij)
+        v = np.where(co == 0, -1.0, np.where(pij >= 1, 1.0, v))
+        out = {}
+        for name in models:
+            per_topic = [float(np.mean(v[tp])) if len(tp) else np.nan for tp in pairs[name]]
+            out[name] = float(np.nanmean(per_topic)) if per_topic else np.nan
+        return out
+
+    n = Xs.shape[0]
+    point = npmi_means(np.ones(n), n)
     rng = np.random.default_rng(seed)
-    n = Xb.shape[0]
     boots = {name: [] for name in models}
     for _ in range(B):
         idx = rng.integers(0, n, n)
-        Xs = Xb[idx]
+        r = npmi_means(np.bincount(idx.astype(np.intp), minlength=n).astype(np.float64), n)
         for name in models:
-            boots[name].append(np.nanmean(_npmi_matrix(Xs, pairs[name])))
+            boots[name].append(r[name])
     jack = None
     if method == "bca":
         jack = {name: [] for name in models}
         for g in _groups(n, seed=seed):
-            keep = np.ones(n, bool)
-            keep[g] = False
+            keep = np.ones(n)
+            keep[g] = 0.0
+            r = npmi_means(keep, keep.sum())
             for name in models:
-                jack[name].append(np.nanmean(_npmi_matrix(Xb[keep], pairs[name])))
+                jack[name].append(r[name])
     res = {}
     for name, v in boots.items():
         lo, hi = ci_from_boot(v, point[name], method, jack[name] if jack else None)
@@ -116,24 +148,63 @@ def bootstrap_coherence(corpus, models: dict, B=1000, seed=42, topn=10, method="
     return res
 
 
+def _agreement_from_counts(C):
+    """ARI y NMI (media aritmética, como scikit-learn) a partir de la tabla de contingencia C."""
+    from scipy.special import comb
+    n = C.sum()
+    if n < 2:
+        return np.nan, np.nan
+    ri, cj = C.sum(axis=1), C.sum(axis=0)
+    sum_comb = comb(C, 2).sum()
+    sa, sb = comb(ri, 2).sum(), comb(cj, 2).sum()
+    expected = sa * sb / comb(n, 2)
+    mx = (sa + sb) / 2
+    ari = 1.0 if mx == expected else float((sum_comb - expected) / (mx - expected))
+    nz = C > 0
+    pij = C[nz] / n
+    pi = (ri / n)[np.nonzero(nz)[0]]
+    pj = (cj / n)[np.nonzero(nz)[1]]
+    mi = float(np.sum(pij * (np.log(pij) - np.log(pi) - np.log(pj))))
+    ent = lambda v: -float(np.sum((v[v > 0] / n) * np.log(v[v > 0] / n)))  # noqa: E731
+    ha, hb = ent(ri), ent(cj)
+    if (ri > 0).sum() == 1 and (cj > 0).sum() == 1:
+        return ari, 1.0
+    denom = (ha + hb) / 2
+    nmi = float(max(mi, 0.0) / denom) if denom > 0 else 1.0
+    return ari, nmi
+
+
 def bootstrap_agreement(a, b, B=1000, seed=42, method="percentile"):
-    """IC 95 % de ARI y NMI remuestreando documentos. Devuelve {"ARI": (lo, hi), "NMI": (lo, hi)}."""
+    """IC 95 % de ARI y NMI remuestreando documentos. Devuelve {"ARI": (lo, hi), "NMI": (lo, hi)}.
+    Cada réplica se calcula con la tabla de contingencia ponderada por las veces que sale cada documento
+    (idéntico a remuestrear filas y más rápido en el navegador)."""
     rng = np.random.default_rng(seed)
     a, b = np.asarray(a), np.asarray(b)
     n = len(a)
+    ua, ia = np.unique(a, return_inverse=True)
+    ub, ib = np.unique(b, return_inverse=True)
+    code = ia * len(ub) + ib
+    shape = (len(ua), len(ub))
+
+    def stat(w):
+        C = np.bincount(code.astype(np.intp), weights=w, minlength=shape[0] * shape[1]).reshape(shape)
+        C = C[C.sum(axis=1) > 0][:, C.sum(axis=0) > 0]
+        return _agreement_from_counts(C)
+
     ari, nmi = [], []
     for _ in range(B):
-        i = rng.integers(0, n, n)
-        ari.append(adjusted_rand_score(a[i], b[i]))
-        nmi.append(normalized_mutual_info_score(a[i], b[i]))
+        r = stat(np.bincount(rng.integers(0, n, n).astype(np.intp), minlength=n).astype(np.float64))
+        ari.append(r[0])
+        nmi.append(r[1])
     jack_a = jack_n = None
     if method == "bca":
         jack_a, jack_n = [], []
         for g in _groups(n, seed=seed):
-            keep = np.ones(n, bool)
-            keep[g] = False
-            jack_a.append(adjusted_rand_score(a[keep], b[keep]))
-            jack_n.append(normalized_mutual_info_score(a[keep], b[keep]))
+            keep = np.ones(n)
+            keep[g] = 0.0
+            r = stat(keep)
+            jack_a.append(r[0])
+            jack_n.append(r[1])
     return {"ARI": ci_from_boot(ari, adjusted_rand_score(a, b), method, jack_a),
             "NMI": ci_from_boot(nmi, normalized_mutual_info_score(a, b), method, jack_n)}
 

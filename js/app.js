@@ -1,6 +1,6 @@
 // BiblioTopic — interfaz (hilo principal). El trabajo pesado ocurre en js/worker.js.
 const $ = (id) => document.getElementById(id);
-const worker = new Worker(new URL("./worker.js?v=20261121", import.meta.url), { type: "module" });
+const worker = new Worker(new URL("./worker.js?v=20261124", import.meta.url), { type: "module" });
 const state = { analyses: {}, sections: {}, summary: null, labels: null, busy: false, aiLabels: false, aiModel: "" };
 
 const DEPENDS = { compare: ["lda", "bertopic"], inference: ["compare", "lda", "bertopic"], strategic: ["lda"],
@@ -34,6 +34,91 @@ function toast(msg, ms = 5000) {
 }
 const setBar = (el, p) => ($(el).style.width = `${Math.round(100 * Math.max(0, Math.min(1, p)))}%`);
 const fmtTime = (s) => (s < 60 ? `${Math.round(s)} s` : `${Math.floor(s / 60)} min ${Math.round(s % 60)} s`);
+const fmtDur = (s) => (s < 90 ? "menos de 2 min" : s < 3600 ? `${Math.round(s / 60)} min`
+  : `${Math.floor(s / 3600)} h ${String(Math.round((s % 3600) / 60)).padStart(2, "0")} min`);
+
+// ---------------------------------------------- progreso total, reloj y vigilancia del análisis
+const RUN = { t0: 0, last: 0, timer: null, eta: null, etaAt: 0 };
+function runClockStart() {
+  RUN.t0 = RUN.last = Date.now(); RUN.eta = null;
+  $("total-box").hidden = false; $("watchdog").hidden = true; $("timings").hidden = true;
+  setBar("bar-total", 0); $("tot-pct").textContent = "0 %"; $("tot-eta").textContent = "calculando el tiempo restante…";
+  clearInterval(RUN.timer);
+  RUN.timer = setInterval(() => {
+    const el = (Date.now() - RUN.t0) / 1000, quiet = (Date.now() - RUN.last) / 1000;
+    let rem = "";
+    if (RUN.eta != null) rem = ` · quedan ~${fmtDur(Math.max(0, RUN.eta - (Date.now() - RUN.etaAt) / 1000))}`;
+    $("tot-clock").textContent = `Tiempo transcurrido: ${fmtDur(el)}${rem}. Mantenga esta pestaña abierta y el equipo enchufado.`;
+    // sin noticias del análisis durante 10 min: probablemente se detuvo (p. ej., memoria insuficiente)
+    if (quiet > 600) {
+      $("watchdog").hidden = false;
+      $("watchdog").innerHTML = `<b>El análisis no informa avances desde hace ${fmtDur(quiet)}.</b> Puede haberse detenido.
+        Compruébelo con Shift + Esc (Administrador de tareas del navegador): si BiblioTopic usa 0 % de CPU, recargue
+        la página y use «Recuperar el último análisis» para repetir solo las figuras.`;
+    } else $("watchdog").hidden = true;
+  }, 1000);
+}
+function runClockStop() { clearInterval(RUN.timer); RUN.timer = null; }
+function runTotal(t) {
+  RUN.last = Date.now();
+  if (!t) return;
+  const pct = Math.round(100 * t.overall);
+  setBar("bar-total", t.overall);
+  $("tot-pct").textContent = `${pct} %`;
+  RUN.eta = t.remaining; RUN.etaAt = Date.now();
+  $("tot-eta").textContent = t.overall < 0.03 ? "· tiempo restante estimado al empezar"
+    : `· quedan ~${fmtDur(t.remaining)}`;
+}
+const STAGE_NAMES = { prep: "Preparación", lda: "LDA", embed: "Embeddings", umap: "UMAP", cluster: "HDBSCAN y c-TF-IDF",
+  render: "Figuras y tablas" };
+function showTimings(t) {
+  if (!t) return;
+  const parts = Object.entries(t).filter(([, v]) => v >= 1).map(([k, v]) => `${STAGE_NAMES[k] || k}: ${fmtDur(v)}`);
+  $("timings").hidden = !parts.length;
+  $("timings").textContent = `Tiempo por etapa — ${parts.join(" · ")}`;
+}
+
+// ---------------------------------------------- punto de control (IndexedDB) para recuperar un análisis
+function idb() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open("bibliotopic", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("kv");
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function idbPut(key, val) {
+  try {
+    const db = await idb();
+    await new Promise((res, rej) => { const tx = db.transaction("kv", "readwrite"); tx.objectStore("kv").put(val, key);
+      tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+  } catch (e) { /* almacenamiento no disponible: sin punto de control */ }
+}
+async function idbGet(key) {
+  try {
+    const db = await idb();
+    return await new Promise((res, rej) => { const r = db.transaction("kv").objectStore("kv").get(key);
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  } catch (e) { return null; }
+}
+async function showRecover() {
+  const ck = await idbGet("checkpoint");
+  if (!ck || !ck.data) return;
+  const box = $("recover");
+  box.hidden = false;
+  box.innerHTML = `Hay un análisis guardado automáticamente el ${new Date(ck.when).toLocaleString()} (modelos ya
+    ajustados). <button type="button" id="b-recover">Recuperar el último análisis</button>
+    <span class="hint">Solo se vuelven a generar las figuras y tablas.</span>`;
+  $("b-recover").onclick = () => {
+    if (state.busy || !$("env").classList.contains("ready")) return toast("Espere a que el entorno esté listo.");
+    busy(true);
+    $("run-status").hidden = false;
+    $("stage").textContent = "Recuperando el análisis guardado…";
+    const data = new Uint8Array(ck.data);
+    worker.postMessage({ cmd: "open_project", data }, [data.buffer]);
+    box.hidden = true;
+  };
+}
 const csv = (s) => s.split(",").map((x) => x.trim()).filter(Boolean);
 
 function busy(on) {
@@ -217,6 +302,7 @@ $("b-run").onclick = () => {
   }
   if (cfg.k_min >= cfg.k_max && !cfg.k) return toast("K mínimo debe ser menor que K máximo.");
   busy(true);
+  runClockStart();
   $("run-status").hidden = false;
   $("stage").textContent = "Iniciando…";
   setBar("bar", 0);
@@ -536,7 +622,7 @@ $("b-ai-translate").onclick = async () => {
   busy(true);
   toast("Traduciendo los nombres al inglés…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261121");
+    const ai = await import("./ai.js?v=20261124");
     const out = await ai.translateLabels(key, inputs.map((i) => i.value), $("m-topic").value.trim());
     out.forEach((t, i) => { if (inputs[i] && t) { setFull(inputs[i].closest(".lrow"), t); inputs[i].closest(".lrow").classList.remove("es"); } });
     state.aiLabels = true;
@@ -555,7 +641,7 @@ $("b-ai-short").onclick = async () => {
   busy(true);
   toast("Pidiendo nombres cortos a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261121");
+    const ai = await import("./ai.js?v=20261124");
     const out = await ai.shortenLabels(key, rows.map((r) => r.querySelector("input.full").value), $("m-topic").value.trim());
     out.forEach((t, i) => {
       const sh = rows[i] && rows[i].querySelector("input.short");
@@ -576,7 +662,7 @@ $("b-ai-labels").onclick = async () => {
   busy(true);
   toast("Pidiendo propuestas de nombres a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261121");
+    const ai = await import("./ai.js?v=20261124");
     const ctx = await getContext();
     const out = await ai.suggestLabels(key, ctx, $("m-topic").value.trim());
     const byId = Object.fromEntries(out.map((t) => [t.id, t]));
@@ -603,7 +689,7 @@ $("b-ai-disc").onclick = async () => {
   out.hidden = false;
   out.textContent = "Redactando la Discusión (puede tardar 1–3 minutos)…";
   try {
-    const ai = await import("./ai.js?v=20261121");
+    const ai = await import("./ai.js?v=20261124");
     const ctx = await getContext();
     const meta = { topic_name: $("m-topic").value.trim() };
     const text = await ai.draftDiscussion(key, ctx, meta, (snap) => { out.textContent = snap; });
@@ -663,7 +749,7 @@ $("b-ai-titles").onclick = async () => {
   busy(true);
   toast("Pidiendo propuestas de título a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261121");
+    const ai = await import("./ai.js?v=20261124");
     const ctx = await getContext();
     const out = await ai.suggestTitles(key, ctx, titleMeta());
     state.aiModel = ai.MODEL;
@@ -718,6 +804,7 @@ worker.onmessage = ({ data: m }) => {
       } else {
         setBar("bar", m.p);
         $("pmsg").textContent = m.msg;
+        runTotal(m.total);
       }
       break;
     case "ready":
@@ -730,6 +817,7 @@ worker.onmessage = ({ data: m }) => {
       $("f-scopus").disabled = false;
       $("f-wos").disabled = false;
       $("f-project").disabled = false;
+      showRecover();
       break;
     case "loaded":
       busy(false);
@@ -737,11 +825,16 @@ worker.onmessage = ({ data: m }) => {
       showSummary(m.summary);
       break;
     case "stage":
-      $("stage").textContent = `${m.stage} · ${fmtTime(m.elapsed)}`;
+      $("stage").textContent = m.stage;
+      $("pmsg").textContent = "";
+      RUN.last = Date.now();
       setBar("bar", 0);
       break;
     case "estimate":
       showEstimate(m.estimate);
+      break;
+    case "checkpoint":
+      idbPut("checkpoint", { when: Date.now(), data: m.data.buffer.slice(m.data.byteOffset, m.data.byteOffset + m.data.byteLength) });
       break;
     case "palette":
       showPalette(m.palette);
@@ -756,8 +849,12 @@ worker.onmessage = ({ data: m }) => {
       worker.postMessage({ cmd: "titles", meta: titleMeta() });
       break;
     case "done":
-      $("stage").textContent = `Análisis terminado en ${fmtTime(m.elapsed)}`;
+      $("stage").textContent = m.elapsed ? `Análisis terminado en ${fmtDur(m.elapsed)}` : "Análisis terminado";
       setBar("bar", 1);
+      runClockStop();
+      if (m.elapsed) { setBar("bar-total", 1); $("tot-pct").textContent = "100 %"; $("tot-eta").textContent = ""; }
+      $("watchdog").hidden = true;
+      showTimings(m.timings);
       $("pmsg").textContent = "";
       $("s-results").scrollIntoView({ behavior: "smooth" });
       break;
@@ -808,10 +905,22 @@ worker.onmessage = ({ data: m }) => {
       busy(false);
       toast("Error: " + m.msg, 12000);
       console.error(m.msg);
+      if (RUN.timer) {  // durante un análisis, el error queda visible en el panel de progreso
+        runClockStop();
+        $("watchdog").hidden = false;
+        $("watchdog").innerHTML = `<b>El análisis se detuvo por un error:</b> ${escH(m.msg).slice(0, 600)}<br>
+          Si ya se habían ajustado los modelos, recargue la página y use «Recuperar el último análisis».`;
+      }
       break;
   }
 };
 worker.onerror = (e) => {
+  if (RUN.timer) {
+    runClockStop();
+    $("watchdog").hidden = false;
+    $("watchdog").innerHTML = `<b>El proceso del análisis se detuvo</b> (${escH(e.message || "error del navegador")}).
+      Recargue la página; si los modelos ya estaban ajustados, use «Recuperar el último análisis».`;
+  }
   $("env-msg").textContent = "No se pudo iniciar el entorno: " + (e.message || "error desconocido");
   console.error(e);
 };
