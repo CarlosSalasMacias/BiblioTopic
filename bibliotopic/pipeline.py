@@ -944,6 +944,13 @@ class Session:
         # ---- validación por expertos
         if self.validation is not None:
             T["T12_expert_validation"] = self.validation["table"]
+            # primera validación del TRI: ¿los pares más robustos son los que mejor valoran los expertos?
+            X["tri_experts"] = None
+            if X.get("C") is not None and lda is not None and bert is not None and self.validation.get("per_topic") is not None:
+                te = ST.tri_expert_correlation(X["C"]["matches"], lda.ids, bert.ids, self.validation["per_topic"])
+                if te:
+                    T["T12b_TRI_vs_experts"] = te["table"]
+                    X["tri_experts"] = te
 
         # ---- figuras compuestas (paneles a, b, c...)
         X["composites"] = {}

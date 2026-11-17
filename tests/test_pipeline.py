@@ -61,3 +61,32 @@ def test_report_matches_tables(session):
     n_all, n_ok = len(S.bert.topics), int((S.bert.topics_raw >= 0).sum())
     assert f"(n = {n_all})" in text and f"(n = {n_ok})" in text
     assert "Stable" not in text
+
+
+def test_tri_expert_validation_in_report(session, tmp_path, monkeypatch):
+    """Con valoraciones de expertos, el TRI se correlaciona con ellas (tabla T12b) y el borrador lo informa."""
+    import functools
+    import pandas as pd
+    from docx import Document
+    from bibliotopic import stats as ST
+    S, _, _ = session
+    rng = np.random.default_rng(0)
+    rows = [{"model": m, "topic": t, "interpretability": rng.uniform(1, 5), "coherence": rng.uniform(1, 5),
+             "model_precision": rng.uniform(0, 1), "intrusion_answers": 3}
+            for m, r in (("LDA", S.lda), ("BERTopic", S.bert)) for t in r.ids]
+    table = pd.DataFrame([{"Model": m, "Interpretability (1-5)": "3.00 [2.00, 4.00]", "Coherence (1-5)": "3.00 [2.00, 4.00]",
+                           "Word-intrusion precision": "0.50 [0.20, 0.80]"} for m in ("LDA", "BERTopic")])
+    old = S.validation
+    S.validation = {"per_topic": pd.DataFrame(rows), "table": table, "tests": {}, "alpha": {}, "fleiss_kappa": {},
+                    "n_raters": 3, "raters": ["a", "b", "c"]}
+    monkeypatch.setattr(ST, "tri_expert_correlation", functools.partial(ST.tri_expert_correlation, min_pairs=2))
+    try:
+        S.render(str(tmp_path))
+        assert "T12b_TRI_vs_experts" in S.tables
+        assert list(S.tables["T12b_TRI_vs_experts"]["Predictor"]) == ["TRI", "Cosine", "Mean stability"]
+        report.build(S, str(tmp_path / "doc.docx"), {"topic_name": "coffee"}, None)
+        txt = "\n".join(p.text for p in Document(str(tmp_path / "doc.docx")).paragraphs)
+        assert "primera validación empírica del TRI" in txt and "correlación del TRI con la interpretabilidad" in txt
+        assert "Magsarjav" in txt and "Velden" in txt
+    finally:
+        S.validation = old

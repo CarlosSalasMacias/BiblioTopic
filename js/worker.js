@@ -180,7 +180,7 @@ class LdaPool {
     });
     const tries = [];
     for (let i = 0; i < this.n; i++) {
-      tries.push(boot(new Worker(new URL("./lda_worker.js?v=20261127", import.meta.url), { type: "module" })));
+      tries.push(boot(new Worker(new URL("./lda_worker.js?v=20261128", import.meta.url), { type: "module" })));
     }
     const res = await Promise.allSettled(tries);
     this.workers = res.filter((r) => r.status === "fulfilled").map((r) => r.value);
@@ -367,7 +367,7 @@ async function render(withProgress = false) {
 json.dumps({k: S.table_json(k) for k in ["T1_main_information", "T2_top_sources", "T3_top_authors",
             "T4_countries", "T5_keywords", "T6_LDA_topics", "T7_BERTopic_topics", "T8_model_metrics",
             "doc_agreement", "T9_topic_alignment", "T8b_inference", "T10_most_cited", "T11_thematic_map",
-            "T12_expert_validation", "topic_best_matches", "tau_sensitivity", "T14_bibliographic_coupling", "periods",
+            "T12_expert_validation", "T12b_TRI_vs_experts", "topic_best_matches", "tau_sensitivity", "T14_bibliographic_coupling", "periods",
             "merge_conflicts"]}, ensure_ascii=False, default=str)`));
   const labels = JSON.parse(py.runPython("json.dumps(S.topic_labels(), ensure_ascii=False)"));
   const quality = JSON.parse(py.runPython("json.dumps(S.quality_checks(), ensure_ascii=False, default=str)"));

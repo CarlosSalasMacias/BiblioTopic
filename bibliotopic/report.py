@@ -45,6 +45,12 @@ REFS = {
     "ward": "Ward, J. H. (1963). Hierarchical grouping to optimize an objective function. Journal of the American Statistical Association, 58(301), 236–244. https://doi.org/10.1080/01621459.1963.10500845",
     "rousseeuw": "Rousseeuw, P. J. (1987). Silhouettes: A graphical aid to the interpretation and validation of cluster analysis. Journal of Computational and Applied Mathematics, 20, 53–65. https://doi.org/10.1016/0377-0427(87)90125-7",
     "bh": "Benjamini, Y., & Hochberg, Y. (1995). Controlling the false discovery rate: A practical and powerful approach to multiple testing. Journal of the Royal Statistical Society: Series B (Methodological), 57(1), 289–300. https://doi.org/10.1111/j.2517-6161.1995.tb02031.x",
+    "belford18": "Belford, M., Mac Namee, B., & Greene, D. (2018). Stability of topic modeling via matrix factorization. Expert Systems with Applications, 91, 159–169. https://doi.org/10.1016/j.eswa.2017.08.047",
+    "hosseiny23": "Hosseiny Marani, A., & Baumer, E. P. S. (2023). A review of stability in topic modeling: Metrics for assessing and techniques for improving stability. ACM Computing Surveys. https://doi.org/10.1145/3623269",
+    "glaser17": "Gläser, J., Glänzel, W., & Scharnhorst, A. (2017). Same data—different results? Towards a comparative approach to the identification of thematic structures in science. Scientometrics, 111(2), 981–998. https://doi.org/10.1007/s11192-017-2296-z",
+    "velden17": "Velden, T., Boyack, K. W., Gläser, J., Koopman, R., Scharnhorst, A., & Wang, S. (2017). Comparison of topic extraction approaches and their results. Scientometrics, 111(2), 1169–1221. https://doi.org/10.1007/s11192-017-2306-1",
+    "magsarjav25": "Magsarjav, S., Humphries, M., Tuke, S. J., & Mitchell, L. (2025). Quantifying consistency and accuracy of latent Dirichlet allocation. arXiv. https://doi.org/10.48550/arXiv.2511.12850",
+    "spearman": "Spearman, C. (1904). The proof and measurement of association between two things. The American Journal of Psychology, 15(1), 72–101. https://doi.org/10.2307/1412159",
     "greene": "Greene, D., O'Callaghan, D., & Cunningham, P. (2014). How many topics? Stability analysis for topic models. In Machine Learning and Knowledge Discovery in Databases (ECML PKDD 2014) (pp. 498–513). Springer. https://doi.org/10.1007/978-3-662-44848-9_32",
     "mann45": "Mann, H. B. (1945). Nonparametric tests against trend. Econometrica, 13(3), 245–259. https://doi.org/10.2307/1907187",
     "sen68": "Sen, P. K. (1968). Estimates of the regression coefficient based on Kendall's tau. Journal of the American Statistical Association, 63(324), 1379–1389. https://doi.org/10.1080/01621459.1968.10480934",
@@ -273,7 +279,9 @@ CITE_NAMES = {
     "page": "Page et al., 2021", "pedregosa": "Pedregosa et al., 2011",
     "reimers": "Reimers y Gurevych, 2019", "strehl": "Strehl y Ghosh, 2002",
     "vaneck": "van Eck y Waltman, 2009", "ward": "Ward, 1963", "rousseeuw": "Rousseeuw, 1987",
-    "efron": "Efron y Tibshirani, 1993", "greene": "Greene et al., 2014", "mann45": "Mann, 1945",
+    "efron": "Efron y Tibshirani, 1993", "greene": "Greene et al., 2014", "belford18": "Belford et al., 2018",
+    "hosseiny23": "Hosseiny Marani y Baumer, 2023", "glaser17": "Gläser et al., 2017", "velden17": "Velden et al., 2017",
+    "magsarjav25": "Magsarjav et al., 2025", "spearman": "Spearman, 1904", "mann45": "Mann, 1945",
     "sen68": "Sen, 1968", "fleiss": "Fleiss, 1971", "kessler": "Kessler, 1963", "efron87": "Efron, 1987", "bh": "Benjamini y Hochberg, 1995", "mann": "Mann y Whitney, 1947", "chang": "Chang et al., 2009",
     "hayes": "Hayes y Krippendorff, 2007", "callon": "Callon et al., 1991", "cobo": "Cobo et al., 2011",
     "small": "Small, 1973", "montazeri": "Montazeri et al., 2023",
@@ -327,10 +335,13 @@ TAB_CAPTIONS = {
     "T12_expert_validation": ("Expert validation of the topics (mean and 95% CI across topics).",
                               "Word-intrusion precision: proportion of raters identifying the intruder word."),
     "T13_cocited_references": ("Most cited references (local citations).", None),
+    "T12b_TRI_vs_experts": ("Spearman correlation between topic robustness (TRI) and expert ratings across matched "
+                            "LDA–BERTopic pairs.", "Expert ratings of a pair: mean of its two topics. Cosine and mean "
+                            "stability (geometric mean of both topics' stability) shown for comparison."),
 }
 TAB_ORDER = ["T1_main_information", "T2_top_sources", "T4_countries", "T10_most_cited", "T13_cocited_references",
              "T11_thematic_map", "T6_LDA_topics", "T7_BERTopic_topics", "T8_model_metrics", "T8b_inference",
-             "T9_topic_alignment", "T12_expert_validation"]
+             "T9_topic_alignment", "T12_expert_validation", "T12b_TRI_vs_experts"]
 
 
 
@@ -724,6 +735,14 @@ def build(R, path, meta, sections=None):
                 + ("Con estos elementos se propone un Índice de Robustez Temática (TRI) para cada par "
                    "emparejado: TRI = cos(LDA, BERTopic) × √(estabilidad LDA × estabilidad BERTopic), con un "
                    "intervalo de confianza del 95 % obtenido remuestreando las réplicas de estabilidad de cada modelo. "
+                   "El índice reúne dos criterios ya empleados por separado: la estabilidad de los temas frente a la "
+                   f"reinicialización aleatoria {cite('greene', 'belford18', 'hosseiny23')} y la comparación de las "
+                   "soluciones de métodos distintos aplicados a los mismos datos, sin una verdad de referencia, "
+                   f"habitual en cienciometría {cite('glaser17', 'velden17')}. Se combinan porque la repetibilidad "
+                   f"por sí sola no garantiza que un tema sea válido {cite('magsarjav25')}: un tema robusto debe "
+                   "reproducirse con distintas semillas y, además, aparecer en un modelo de naturaleza diferente "
+                   "(probabilístico frente a basado en embeddings). La media geométrica de las dos estabilidades "
+                   "penaliza el par cuando cualquiera de los dos temas es inestable. "
                    if stab_on else "")
                 + f"Un par se consideró convergente cuando la similitud fue ≥ {cfg['tau_strong']}, parcial "
                 f"cuando estuvo entre {cfg['tau_partial']} y {cfg['tau_strong']}, y divergente (sin correspondencia "
@@ -796,7 +815,12 @@ def build(R, path, meta, sections=None):
                 f"Krippendorff {cite('hayes')} (nivel de intervalo para las calificaciones y nominal para la "
                 f"palabra intrusa) y con la kappa de Fleiss {cite('fleiss')} para la elección de la palabra intrusa; "
                 "para cada tema se informa la precisión de la prueba de intrusión (proporción de evaluadores que "
-                "identificaron el término ajeno).")
+                "identificaron el término ajeno)."
+                + (" Como primera validación empírica del TRI, se calculó la correlación de Spearman "
+                   f"{cite('spearman')} entre el TRI de cada par emparejado y la valoración media de los expertos de "
+                   "los dos temas del par (interpretabilidad, coherencia y precisión de la palabra intrusa), y se "
+                   "comparó con la que se obtiene usando solo el coseno o solo la estabilidad media."
+                   if X.get("tri_experts") else ""))
         if R.ai.get("discussion") or R.ai.get("labels_used") or meta.get("ai_title"):
             W.h(f"2.{next(s)}. Uso de inteligencia artificial", 2)
             W.p("Se utilizó un modelo de lenguaje (", (meta.get("ai_model") or "Claude", "hl"), ", Anthropic) "
@@ -988,7 +1012,7 @@ def build(R, path, meta, sections=None):
             def pairs(df_, k=4):
                 return "; ".join(
                     f"{r['LDA topic']} – {r['BERTopic topic']} (coseno = {f(r['Cosine'], 2)}"
-                    + (f"; TRI = {f(r['TRI'], 2)}" if stab_on else "")
+                    + (f"; TRI = {f(r['TRI'], 3)}" if stab_on else "")
                     + f"; términos compartidos: {r['Shared terms'] or '—'})"
                     for _, r in df_.sort_values("Cosine", ascending=False).head(k).iterrows())
             W.p(f"El emparejamiento óptimo entre temas{ref('sim', 'T9_topic_alignment')} identificó "
@@ -1126,6 +1150,20 @@ def build(R, path, meta, sections=None):
             if fk is not None and not np.isnan(fk):
                 txt += f" La kappa de Fleiss para la elección de la palabra intrusa fue {f(fk, 3)}."
             W.p(txt)
+            te = X.get("tri_experts")
+            if te:
+                F_ = te["facts"]
+
+                def _r(pred, c):
+                    v = F_.get((pred, c))
+                    return f"ρ = {f(v['rho'], 3)} (p {fp(v['p'])})" if v else "no estimable"
+                W.p(f"En los {te['n_pairs']} pares emparejados con valoración de los expertos{ref('T12b_TRI_vs_experts')}, "
+                    f"la correlación del TRI con la interpretabilidad media fue {_r('TRI', 'interpretability')}, con la "
+                    f"coherencia {_r('TRI', 'coherence')} y con la precisión de la palabra intrusa "
+                    f"{_r('TRI', 'model_precision')}. Con el coseno solo, la correlación con la interpretabilidad fue "
+                    f"{_r('Cosine', 'interpretability')}, y con la estabilidad media sola, "
+                    f"{_r('Mean stability', 'interpretability')}. Con este número de pares, estas correlaciones son "
+                    "exploratorias.")
 
     # ============================================================== DISCUSIÓN (IA)
     corpus_refs = []

@@ -329,3 +329,44 @@ def permutation_null_cosine(A, B, n_perm=1000, seed=42):
     p = (ge + 1) / (n_perm + 1)
     return {"p": p, "p95_pair": np.percentile(null_all, 95, axis=0), "p95_global": float(np.percentile(null_all, 95)),
             "n_perm": n_perm}
+
+
+def tri_expert_correlation(matches, lda_ids, bert_ids, per_topic, min_pairs=5):
+    """Primera validación empírica del TRI: correlación de Spearman, sobre los pares emparejados, entre el TRI (y,
+    para comparar, sus componentes por separado: coseno y estabilidad media) y la valoración de los expertos del
+    par (media de los dos temas: interpretabilidad, coherencia y precisión de la palabra intrusa).
+    Devuelve None si no hay al menos min_pairs pares con TRI y valoraciones."""
+    import pandas as pd
+    if matches is None or per_topic is None or "TRI" not in matches or "_i" not in matches:
+        return None
+    pt = per_topic.set_index(["model", "topic"])
+    rows = []
+    for _, m in matches.iterrows():
+        if pd.isna(m.get("_i")) or pd.isna(m.get("_j")) or not np.isfinite(m.get("TRI", np.nan)):
+            continue
+        a, b = ("LDA", lda_ids[int(m["_i"])]), ("BERTopic", bert_ids[int(m["_j"])])
+        if a not in pt.index or b not in pt.index:
+            continue
+        r = {"LDA": a[1], "BERTopic": b[1], "TRI": float(m["TRI"]), "Cosine": float(m["Cosine"]),
+             "Mean stability": float(np.sqrt(m["Stability LDA"] * m["Stability BERTopic"]))}
+        for c in ("interpretability", "coherence", "model_precision"):
+            r[c] = float(np.nanmean([pt.loc[a, c], pt.loc[b, c]]))
+        rows.append(r)
+    d = pd.DataFrame(rows)
+    if len(d) < min_pairs:
+        return None
+    names = {"interpretability": "Interpretability (1-5)", "coherence": "Coherence (1-5)",
+             "model_precision": "Word-intrusion precision"}
+    out, facts = [], {}
+    for pred in ("TRI", "Cosine", "Mean stability"):
+        row = {"Predictor": pred}
+        for c, nm in names.items():
+            ok = d[[pred, c]].dropna()
+            if len(ok) >= min_pairs and ok[pred].nunique() > 1 and ok[c].nunique() > 1:
+                rho, p = stats.spearmanr(ok[pred], ok[c])
+                row[nm] = f"ρ = {rho:.3f} (p {('= ' + fmt_p(p)) if p >= 0.001 else fmt_p(p)}; n = {len(ok)})"
+                facts[(pred, c)] = {"rho": float(rho), "p": float(p), "n": int(len(ok))}
+            else:
+                row[nm] = "n.a."
+        out.append(row)
+    return {"table": pd.DataFrame(out), "pairs": d, "facts": facts, "n_pairs": int(len(d))}

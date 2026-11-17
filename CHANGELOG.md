@@ -85,6 +85,14 @@ repetir con la versión 2 los análisis hechos con la versión 1.
 | **Punto de control automático** al terminar LDA y BERTopic (se guarda en el navegador). Si algo falla después, al recargar la página aparece «Recuperar el último análisis», que solo repite las figuras y tablas. | Un fallo al final ya no obliga a repetir horas de modelado. |
 | Aviso si el análisis no informa avances durante 10 min, errores visibles en el panel de progreso y **tiempo por etapa** al terminar. | Distinguir un análisis lento de uno detenido. |
 
+### Índice de Robustez Temática (TRI): fundamentación y primera validación
+
+| Cambio | Justificación |
+|---|---|
+| Métodos sitúa el TRI en la literatura: combina la estabilidad frente a la reinicialización (Greene et al., 2014; Belford et al., 2018; Hosseiny Marani y Baumer, 2023) con la comparación entre métodos sin verdad de referencia habitual en cienciometría (Gläser et al., 2017; Velden et al., 2017), y explica por qué la repetibilidad sola no basta (Magsarjav et al., 2025). | Una búsqueda bibliográfica (Consensus y SciSpace, ~300 registros) no encontró un índice por par de temas que combine la similitud entre modelos de distinta naturaleza con la estabilidad entre semillas; sí trabajos que usan cada criterio por separado. |
+| Con la validación por expertos cargada, nueva tabla «TRI frente a la valoración de los expertos»: correlación de Spearman, sobre los pares emparejados, entre el TRI y la interpretabilidad, la coherencia y la precisión de la palabra intrusa del par, comparada con la del coseno solo y la estabilidad sola. Texto en Métodos y Resultados. | Primera validación empírica del índice, sin depender de umbrales. |
+| El TRI de cada par se informa con 3 decimales en Resultados. | Regla de decimales para índices. |
+
 ### Corrección metodológica: intervalo de confianza de la coherencia NPMI
 
 | Cambio | Justificación |
