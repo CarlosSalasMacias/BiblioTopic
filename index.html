@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BiblioTopic</title>
 <meta name="description" content="Bibliometría, LDA, BERTopic y HJ-Biplot sobre corpus de Web of Science y Scopus, con borrador de Métodos y Resultados.">
-<link rel="stylesheet" href="css/style.css?v=20261118">
+<link rel="stylesheet" href="css/style.css?v=20261120">
 </head>
 <body>
 <header>
@@ -57,15 +57,21 @@
         <label class="wide">Ecuación exacta en Web of Science <textarea id="q-wos" rows="2"
           placeholder='TS=(coffee OR "coffea arabica")'></textarea></label>
         <label>Fecha de la búsqueda <input type="date" id="q-date"></label>
-        <div class="wide">Índices de WoS consultados <span id="q-idx" class="chips">
-          <label><input type="checkbox" value="SCI-EXPANDED"> SCI-E</label>
-          <label><input type="checkbox" value="SSCI"> SSCI</label>
-          <label><input type="checkbox" value="A&amp;HCI"> A&amp;HCI</label>
-          <label><input type="checkbox" value="ESCI"> ESCI</label>
-          <label><input type="checkbox" value="CPCI-S"> CPCI-S</label>
-          <label><input type="checkbox" value="CPCI-SSH"> CPCI-SSH</label>
-          <label><input type="checkbox" value="BKCI-S"> BKCI-S</label>
-          <label><input type="checkbox" value="BKCI-SSH"> BKCI-SSH</label></span></div>
+        <div class="wide">Índices de la Colección Principal de WoS consultados (opcional) <span id="q-idx" class="chips">
+          <label title="Science Citation Index Expanded"><input type="checkbox" value="SCI-EXPANDED"> SCI-E</label>
+          <label title="Social Sciences Citation Index"><input type="checkbox" value="SSCI"> SSCI</label>
+          <label title="Arts &amp; Humanities Citation Index"><input type="checkbox" value="A&amp;HCI"> A&amp;HCI</label>
+          <label title="Emerging Sources Citation Index"><input type="checkbox" value="ESCI"> ESCI</label>
+          <label title="Conference Proceedings Citation Index – Science"><input type="checkbox" value="CPCI-S"> CPCI-S</label>
+          <label title="Conference Proceedings Citation Index – Social Sciences &amp; Humanities"><input type="checkbox" value="CPCI-SSH"> CPCI-SSH</label>
+          <label title="Book Citation Index – Science"><input type="checkbox" value="BKCI-S"> BKCI-S</label>
+          <label title="Book Citation Index – Social Sciences &amp; Humanities"><input type="checkbox" value="BKCI-SSH"> BKCI-SSH</label></span>
+          <p class="hint">WoS no es una sola base: la Colección Principal se compone de varios índices y cada
+            institución tiene suscritos algunos. Los resultados cambian según los índices consultados, por eso las
+            revistas piden declararlos. Para verlos: en Web of Science, bajo el cuadro de búsqueda, despliegue
+            <em>Editions</em> (Ediciones) de <em>Web of Science Core Collection</em>; marque aquí los que estaban
+            seleccionados. Solo se usan para redactar Métodos (no afectan al análisis); si no los marca, el informe
+            deja un espacio para completarlos.</p></div>
       </div>
     </details>
     <div class="row">
@@ -82,7 +88,7 @@
     <div class="profile-row">
       <label>Perfil
         <select id="o-profile">
-          <option value="publication" selected>Publicación (recomendado para revistas Q1)</option>
+          <option value="publication" selected>Publicación</option>
           <option value="quick">Exploración rápida</option>
         </select></label>
       <span id="estimate" class="hint"></span>
@@ -154,6 +160,10 @@
           <select id="o-shape"><option value="hull">Envolvente convexa</option><option value="ellipse">Elipse</option></select></label>
       </div>
     </details>
+    <div id="audit-gate" class="warn err gate" hidden>
+      <b>Antes de ejecutar:</b> los archivos tienen campos críticos incompletos (vea la auditoría en el paso 1).
+      <label class="confirm"><input type="checkbox" id="audit-ok2"> Entiendo la advertencia y quiero continuar con estos archivos</label>
+    </div>
     <div class="row">
       <button id="b-run" class="primary">Ejecutar análisis</button>
       <button id="b-script-pre" type="button">Descargar script con esta configuración</button>
@@ -252,6 +262,6 @@
 </main>
 <footer class="wrap">BiblioTopic · código abierto en
   <a href="https://github.com/CarlosSalasMacias/BiblioTopic">GitHub</a> · Diseñado por Carlos Salas-Macías &amp; Karime Montes-Escobar</footer>
-<script type="module" src="js/app.js?v=20261118"></script>
+<script type="module" src="js/app.js?v=20261120"></script>
 </body>
 </html>

@@ -110,3 +110,24 @@ button.ai { border-color: #8C6BB1; color: #8C6BB1; }
 .quality li.red b { color: #b42318; }
 .grid h4 { margin: 10px 0 0; font-size: 13px; grid-column: 1 / -1; }
 .small { font-size: 12px; padding: 2px 8px; }
+
+.gate { font-size: 14px; border-left-width: 5px; }
+.gate .confirm { font-size: 15px; }
+.gate .confirm input { width: 18px; height: 18px; vertical-align: -3px; margin-right: 6px; }
+.gate.ok { border-left-color: #2e7d32; }
+.gate.flash { animation: gateflash 1.2s ease 2; }
+@keyframes gateflash { 0%, 100% { box-shadow: none; } 50% { box-shadow: 0 0 0 4px rgba(180, 35, 24, .35); } }
+
+.ovcard { border: 1px solid var(--line); border-radius: 12px; background: var(--card); padding: 16px 18px; margin: 14px 0; }
+.ovnums { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.ovnums span { display: block; font-size: 13px; color: var(--muted); }
+.ovnums b { display: block; font-size: 30px; font-weight: 600; letter-spacing: -0.01em; }
+.ovnums b.ok { color: var(--ok); }
+.ovbar { display: flex; gap: 2px; height: 12px; margin: 14px 0 8px; border-radius: 6px; overflow: hidden; }
+.ovbar i { display: block; min-width: 3px; }
+.ovleg { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 14px; font-size: 13px; color: var(--muted); }
+.ovleg i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+.ovbar .sc, .ovleg .sc { background: #3a78b5; }
+.ovbar .both, .ovleg .both { background: #4f9e83; }
+.ovbar .wos, .ovleg .wos { background: #d39a4a; }
+@media (max-width: 520px) { .ovnums b { font-size: 22px; } }

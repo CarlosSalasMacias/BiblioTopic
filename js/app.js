@@ -1,6 +1,6 @@
 // BiblioTopic — interfaz (hilo principal). El trabajo pesado ocurre en js/worker.js.
 const $ = (id) => document.getElementById(id);
-const worker = new Worker(new URL("./worker.js?v=20261118", import.meta.url), { type: "module" });
+const worker = new Worker(new URL("./worker.js?v=20261120", import.meta.url), { type: "module" });
 const state = { analyses: {}, sections: {}, summary: null, labels: null, busy: false, aiLabels: false, aiModel: "" };
 
 const DEPENDS = { compare: ["lda", "bertopic"], inference: ["compare", "lda", "bertopic"], strategic: ["lda"],
@@ -82,6 +82,7 @@ function showSummary(s) {
       + `Se conservan por defecto (opción «Sin dato» en las opciones de filtrado); desmárquela para excluirlos.`);
   }
   box.innerHTML = `
+    ${overlapCard(st)}
     <div class="stats">
       <div class="stat"><b>${st.records_total.toLocaleString()}</b><span>registros cargados</span></div>
       <div class="stat"><b>${st.duplicates_removed.toLocaleString()}</b><span>duplicados eliminados</span></div>
@@ -97,6 +98,10 @@ function showSummary(s) {
     ${auditHtml(s.audit)}
     ${topKwHtml(s.top_keywords)}`;
   state.auditBlock = !!(s.audit && s.audit.critical_low.length);
+  // la confirmación aparece también junto al botón «Ejecutar análisis»; ambas casillas están sincronizadas
+  $("audit-gate").hidden = !state.auditBlock;
+  syncAudit(false);
+  if ($("audit-ok")) $("audit-ok").onchange = (e) => syncAudit(e.target.checked);
   state.loaded = true;
   applyProfile($("o-profile").value);
   // opciones dependientes de los datos
@@ -117,6 +122,25 @@ function showSummary(s) {
 const FIELD_NAMES = { AB: "Resumen", DE: "Palabras clave de autor", ID: "Index Keywords / Keywords Plus", LA: "Idioma",
   DT: "Tipo de documento", PY: "Año", DI: "DOI", TC: "Citas", C1: "Afiliaciones", RP: "Autor de correspondencia",
   CR: "Referencias citadas", "RP/C1": "Correspondencia o afiliación" };
+// Tarjeta de cobertura por base: registros de cada base, únicos y barra solo Scopus / ambas / solo WoS
+function overlapCard(st) {
+  const by = st.records_by_db || {}, ov = st.overlap || {};
+  if (!(by.Scopus && by.WoS)) return "";
+  const parts = [["Solo Scopus", ov.Scopus || 0, "sc"], ["Ambas", ov["WoS+Scopus"] || 0, "both"], ["Solo WoS", ov.WoS || 0, "wos"]];
+  const tot = parts.reduce((a, p) => a + p[1], 0) || 1;
+  const pct = (n) => (100 * n / tot).toFixed(1);
+  return `<div class="ovcard">
+    <div class="ovnums">
+      <div><span>Scopus</span><b>${by.Scopus.toLocaleString()}</b></div>
+      <div><span>WoS</span><b>${by.WoS.toLocaleString()}</b></div>
+      <div><span>Registros únicos</span><b class="ok">${st.unique.toLocaleString()}</b></div>
+    </div>
+    <div class="ovbar" role="img" aria-label="${parts.map((p) => `${p[0]}: ${p[1]}`).join(", ")}">
+      ${parts.map((p) => `<i class="${p[2]}" style="flex-grow:${p[1]}" title="${p[0]}: ${p[1].toLocaleString()} (${pct(p[1])} %)"></i>`).join("")}</div>
+    <div class="ovleg">${parts.map((p) => `<span><i class="${p[2]}"></i>${p[0]}: <b>${p[1].toLocaleString()}</b> (${pct(p[1])} %)</span>`).join("")}</div>
+  </div>`;
+}
+
 function auditHtml(a) {
   if (!a) return "";
   const fields = ["AB", "DE", "ID", "LA", "DT", "PY", "DI", "TC", "C1", "RP", "CR"];
@@ -173,12 +197,23 @@ $("analyses").addEventListener("change", (e) => {
   $("analyses").querySelectorAll("input").forEach((i) => (i.checked = sel.has(i.value)));
 });
 
+function syncAudit(v) {
+  if ($("audit-ok")) $("audit-ok").checked = v;
+  $("audit-ok2").checked = v;
+  $("audit-gate").classList.toggle("ok", v);
+}
+$("audit-ok2").onchange = (e) => syncAudit(e.target.checked);
+
 $("b-run").onclick = () => {
   const analyses = checked("analyses");
   if (!analyses.length) return toast("Seleccione al menos un análisis.");
   const cfg = buildCfg();
-  if (state.auditBlock && !$("audit-ok")?.checked)
-    return toast("Confirme la advertencia de campos incompletos (paso 1) antes de ejecutar el análisis.", 9000);
+  if (state.auditBlock && !$("audit-ok2").checked) {
+    const g = $("audit-gate");
+    g.scrollIntoView({ behavior: "smooth", block: "center" });
+    g.classList.remove("flash"); void g.offsetWidth; g.classList.add("flash");
+    return toast("Marque la casilla de confirmación que está justo encima del botón «Ejecutar análisis».", 9000);
+  }
   if (cfg.k_min >= cfg.k_max && !cfg.k) return toast("K mínimo debe ser menor que K máximo.");
   busy(true);
   $("run-status").hidden = false;
@@ -445,7 +480,7 @@ $("b-ai-translate").onclick = async () => {
   busy(true);
   toast("Traduciendo los nombres al inglés…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261118");
+    const ai = await import("./ai.js?v=20261120");
     const out = await ai.translateLabels(key, inputs.map((i) => i.value), $("m-topic").value.trim());
     out.forEach((t, i) => { if (inputs[i] && t) { setFull(inputs[i].closest(".lrow"), t); inputs[i].closest(".lrow").classList.remove("es"); } });
     state.aiLabels = true;
@@ -464,7 +499,7 @@ $("b-ai-short").onclick = async () => {
   busy(true);
   toast("Pidiendo nombres cortos a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261118");
+    const ai = await import("./ai.js?v=20261120");
     const out = await ai.shortenLabels(key, rows.map((r) => r.querySelector("input.full").value), $("m-topic").value.trim());
     out.forEach((t, i) => {
       const sh = rows[i] && rows[i].querySelector("input.short");
@@ -485,7 +520,7 @@ $("b-ai-labels").onclick = async () => {
   busy(true);
   toast("Pidiendo propuestas de nombres a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261118");
+    const ai = await import("./ai.js?v=20261120");
     const ctx = await getContext();
     const out = await ai.suggestLabels(key, ctx, $("m-topic").value.trim());
     const byId = Object.fromEntries(out.map((t) => [t.id, t]));
@@ -512,7 +547,7 @@ $("b-ai-disc").onclick = async () => {
   out.hidden = false;
   out.textContent = "Redactando la Discusión (puede tardar 1–3 minutos)…";
   try {
-    const ai = await import("./ai.js?v=20261118");
+    const ai = await import("./ai.js?v=20261120");
     const ctx = await getContext();
     const meta = { topic_name: $("m-topic").value.trim() };
     const text = await ai.draftDiscussion(key, ctx, meta, (snap) => { out.textContent = snap; });
@@ -572,7 +607,7 @@ $("b-ai-titles").onclick = async () => {
   busy(true);
   toast("Pidiendo propuestas de título a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261118");
+    const ai = await import("./ai.js?v=20261120");
     const ctx = await getContext();
     const out = await ai.suggestTitles(key, ctx, titleMeta());
     state.aiModel = ai.MODEL;
