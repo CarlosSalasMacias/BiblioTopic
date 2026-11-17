@@ -102,3 +102,25 @@ def cocitation(df: pd.DataFrame, top=40):
             edges[(a, b)] += 1
     table = pd.DataFrame(freq.most_common(20), columns=["Cited reference", "Local citations"])
     return [(k, freq[k]) for k in keep], edges, table
+
+
+def bibliographic_coupling(df: pd.DataFrame, top=40, min_refs=1):
+    """Acoplamiento bibliográfico (Kessler, 1963) entre los documentos más citados del corpus: dos documentos
+    están acoplados si comparten referencias citadas; el peso es el número de referencias compartidas.
+    Devuelve (nodos [(documento, citas)], aristas {(a, b): peso}, tabla de los pares más acoplados)."""
+    refs = df["CR"].fillna("").map(lambda s: {k for k in (ref_key(x) for x in s.split(";")) if k})
+    d = df.assign(_refs=refs, _tc=df["TC"].fillna(0))
+    d = d[d["_refs"].map(len) >= min_refs].sort_values("_tc", ascending=False).head(top)
+    names = [short_ref(r) for _, r in d.iterrows()]
+    nodes = [(nm, int(tc)) for nm, tc in zip(names, d["_tc"])]
+    edges = Counter()
+    rows = []
+    R = list(d["_refs"])
+    for i, j in itertools.combinations(range(len(R)), 2):
+        w = len(R[i] & R[j])
+        if w:
+            edges[(names[i], names[j])] = w
+            rows.append((names[i], names[j], w, round(w / np.sqrt(len(R[i]) * len(R[j])), 3)))
+    table = pd.DataFrame(sorted(rows, key=lambda x: -x[2])[:20],
+                         columns=["Document A", "Document B", "Shared references", "Coupling strength (cosine)"])
+    return nodes, edges, table

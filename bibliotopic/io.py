@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import html
 import io
 import re
 import unicodedata
@@ -99,15 +100,53 @@ def read_file(name: str, raw: bytes) -> tuple[pd.DataFrame, str]:
 
 # ----------------------------------------------------------- normalización
 _COPYRIGHT = re.compile(
-    r"(©|\(c\)\s*\d{4}|copyright\s*(©|\(c\))?\s*\d{4}|\d{4}\s+(the\s+)?authors?\.?\s+published"
-    r"|published by elsevier|all rights reserved).*$", re.I | re.S)
+    r"(©|\(c\)\s*\d{4}|copyright\s*(©|\(c\))?\s*(\d{4}|the\s+author)|\d{4}\s+(the\s+)?authors?\.?\s+published"
+    r"|published by elsevier|all rights reserved|this is an open access article distributed under"
+    r"|this article is protected by copyright).*$", re.I | re.S)
+_TAG = re.compile(r"</?[A-Za-z][A-Za-z0-9:_-]*(\s[^<>]*)?/?>")
+
+
+def strip_markup(s: str) -> str:
+    """Quita etiquetas HTML/XML (<italic>, <sup>, <inf>, <sub>, <scp>...) y decodifica entidades (&amp;, &lt;...)."""
+    s = str(s or "")
+    if "<" in s or "&" in s:
+        s = html.unescape(_TAG.sub("", html.unescape(s)))
+    return re.sub(r"[ \t]+", " ", s).strip()
 
 
 def clean_abstract(ab: str) -> str:
-    ab = (ab or "").strip()
+    ab = strip_markup(ab)
     if ab.lower().startswith("[no abstract"):
         return ""
     return _COPYRIGHT.sub("", ab).strip()
+
+
+# ------------------------------------------------- tipos de documento e idiomas
+DOC_TYPES = ["Article", "Review", "Conference paper", "Book chapter", "Book", "Other"]
+
+
+def canonical_doctype(raw: str) -> str:
+    """Vocabulario común para WoS y Scopus (sin distinguir mayúsculas; acepta etiquetas múltiples de WoS
+    como «Article; Proceedings Paper» o «Article; Early Access»). Vacío = no disponible."""
+    toks = [t.strip().lower() for t in re.split(r"[;,]", str(raw or "")) if t.strip()]
+    if not toks:
+        return ""
+    if any(t in ("proceedings paper", "conference paper") for t in toks):
+        return "Conference paper"
+    if any(t in ("review", "systematic review") for t in toks):
+        return "Review"
+    if any(t in ("book chapter", "chapter") for t in toks):
+        return "Book chapter"
+    if "book" in toks:
+        return "Book"
+    if "article" in toks or toks == ["early access"]:
+        return "Article"
+    return "Other"  # editorial material, letter, note, erratum, correction, meeting abstract, data paper...
+
+
+def split_languages(raw: str) -> list[str]:
+    """«English; Spanish» -> ['English', 'Spanish'] (Scopus da varios idiomas cuando hay resumen traducido)."""
+    return [t.strip().title() for t in re.split(r"[;,]", str(raw or "")) if t.strip()]
 
 
 def _strip_accents(s: str) -> str:
@@ -145,12 +184,15 @@ def normalize(df: pd.DataFrame, db: str) -> pd.DataFrame:
     out["TC"] = pd.to_numeric(out["TC"], errors="coerce")
     out["AB"] = out["AB"].map(clean_abstract)
     out["DI"] = out["DI"].str.strip().str.lower().str.replace(r"^https?://(dx\.)?doi\.org/", "", regex=True)
-    out["DT"] = out["DT"].str.split(";").str[0].str.strip().str.title()
-    out["LA"] = out["LA"].str.split(";").str[0].str.strip().str.title()
+    out["DT_RAW"] = out["DT"].str.strip()
+    out["DT"] = out["DT"].map(canonical_doctype)
+    out["LA"] = out["LA"].map(lambda s_: "; ".join(split_languages(s_)))
+    for f_ in ("TI", "SO"):
+        out[f_] = out[f_].map(strip_markup)
     sep = ";"
     out["AU"] = out["AU"].map(lambda s: "; ".join(x for x in (norm_author(a) for a in s.split(sep)) if x))
     for f in ("DE", "ID"):
-        out[f] = out[f].map(lambda s: "; ".join(k.strip().lower() for k in s.split(";") if k.strip()))
+        out[f] = out[f].map(lambda s: "; ".join(k for k in (strip_markup(x).lower() for x in s.split(";")) if k))
     out["TI"] = out["TI"].str.strip()
     return out
 
@@ -260,7 +302,9 @@ def merge(frames: list[pd.DataFrame], return_links: bool = False):
     merged = raw[raw["_rank"] == 0].set_index("_g").copy()
     size = raw.groupby("_g").size()
     merged["DB_SOURCES"] = raw.groupby("_g")["DB"].agg(lambda s_: "+".join(sorted(set(s_), reverse=True)))
-    merged["TC"] = raw.groupby("_g")["TC"].max()
+    merged["TC"] = raw.groupby("_g")["TC"].max()  # por defecto el máximo entre bases (se documenta)
+    for db_ in ("WoS", "Scopus"):
+        merged[f"TC_{db_}"] = raw[raw["DB"] == db_].groupby("_g")["TC"].max()
     merged["N_RECORDS"] = size
     merged["FIELDS_FROM_OTHER"] = ""
     merged["CONFLICTS"] = ""
@@ -327,39 +371,140 @@ def status_by_db(df: pd.DataFrame, field: str, eligible=None) -> pd.DataFrame:
     """Recuento por base de origen: valor elegible, no elegible y sin dato (desconocido)."""
     src = df["DB_SOURCES"] if "DB_SOURCES" in df else df["DB"]
     known = _known(df[field])
-    elig = df[field].isin(eligible) if eligible else known
+    elig = _eligible(df[field], field, eligible) if eligible else known
     out = pd.DataFrame({"Source": src, "Eligible": known & elig, "Not eligible": known & ~elig,
                         "Unknown": ~known})
     return out.groupby("Source")[["Eligible", "Not eligible", "Unknown"]].sum().astype(int).reset_index()
 
 
-def apply_filters(df: pd.DataFrame, year_min=None, year_max=None, doc_types=None,
-                  languages=None, keep_unknown_type=True, keep_unknown_language=True) -> tuple[pd.DataFrame, list]:
-    """Filtros de elegibilidad; devuelve el corpus y los pasos para el diagrama PRISMA.
-    Para tipo de documento e idioma se distinguen tres estados: elegible, no elegible y desconocido (campo
-    vacío). Los desconocidos se conservan salvo que se indique lo contrario y nunca se cuentan como
-    «otro idioma» u «otro tipo»."""
+def _eligible(values: pd.Series, field: str, allowed) -> pd.Series:
+    allowed = {str(a).strip().lower() for a in allowed}
+    if field == "LA":  # basta con que uno de los idiomas del registro esté admitido
+        return values.map(lambda v: any(x.lower() in allowed for x in split_languages(v)))
+    return values.fillna("").astype(str).str.strip().str.lower().isin(allowed)
+
+
+MIN_ABSTRACT_WORDS = 20
+
+
+def apply_filters(df: pd.DataFrame, year_min=None, year_max=None, doc_types=None, languages=None,
+                  keep_unknown_type=True, keep_unknown_language=True, keep_unknown_year=True):
+    """Criterios de elegibilidad en dos niveles; ningún registro se descarta por un campo ausente.
+
+    1) Corpus bibliométrico: registros que cumplen año, tipo de documento e idioma. Para cada criterio hay tres
+       estados (cumple, no cumple, dato no disponible); los registros sin dato se conservan salvo que el usuario
+       los excluya explícitamente (keep_unknown_* = False).
+    2) Corpus de modelado de temas: además requiere resumen (≥ 20 palabras) y año de publicación. Los registros
+       sin resumen siguen en los análisis bibliométricos.
+
+    Devuelve (corpus bibliométrico, corpus de modelado, pasos). Cada paso es (motivo, n, tipo) con tipo
+    «excluded» (excluido del corpus), «kept» (sin dato, conservado) o «modelling» (fuera solo del modelado)."""
     steps = []
     d = df.copy()
+    py_known = d["PY"].notna()
     if year_min is not None or year_max is not None:
         lo = year_min if year_min is not None else int(d["PY"].min())
         hi = year_max if year_max is not None else int(d["PY"].max())
-        m = d["PY"].between(lo, hi)
-        steps.append((f"Outside {lo}-{hi}", int((~m).sum())))
-        d = d[m]
+        out = py_known & ~d["PY"].between(lo, hi)
+        steps.append((f"Outside {lo}-{hi}", int(out.sum()), "excluded"))
+        d = d[~out]
+    n_unk = int(d["PY"].isna().sum())
+    if n_unk:
+        steps.append(("Year not available", n_unk, "kept" if keep_unknown_year else "excluded"))
+        if not keep_unknown_year:
+            d = d[d["PY"].notna()]
     for field, allowed, keep_unknown, name in (("DT", doc_types, keep_unknown_type, "document type"),
                                                ("LA", languages, keep_unknown_language, "language")):
         if not allowed:
             continue
         known = _known(d[field])
-        bad = known & ~d[field].isin(allowed)
-        steps.append((f"Non-eligible {name}", int(bad.sum())))
-        drop = bad
-        if not keep_unknown:
-            steps.append((f"Unknown {name} (excluded)", int((~known).sum())))
-            drop = drop | ~known
+        bad = known & ~_eligible(d[field], field, allowed)
+        steps.append((f"Non-eligible {name}", int(bad.sum()), "excluded"))
+        if (~known).any():
+            steps.append((f"{name.capitalize()} not available", int((~known).sum()),
+                          "kept" if keep_unknown else "excluded"))
+        drop = bad if keep_unknown else (bad | ~known)
         d = d[~drop]
-    m = d["AB"].str.split().str.len().fillna(0) >= 20
-    steps.append(("Missing/short abstract (<20 words)", int((~m).sum())))
-    d = d[m]
-    return d.reset_index(drop=True), steps
+    dfb = d.reset_index(drop=True)
+    words = dfb["AB"].fillna("").str.split().str.len().fillna(0)
+    no_ab = words == 0
+    short = (words > 0) & (words < MIN_ABSTRACT_WORDS)
+    no_py = dfb["PY"].isna() & ~no_ab & ~short
+    steps.append(("No abstract", int(no_ab.sum()), "modelling"))
+    steps.append((f"Abstract shorter than {MIN_ABSTRACT_WORDS} words", int(short.sum()), "modelling"))
+    if no_py.any():
+        steps.append(("Year not available", int(no_py.sum()), "modelling"))
+    dfm = dfb[~(no_ab | short | no_py)].reset_index(drop=True)
+    return dfb, dfm, steps
+
+
+# ------------------------------------------------------------ auditoría de campos
+AUDIT_FIELDS = ["AB", "DE", "ID", "LA", "DT", "PY", "DI", "TC", "C1", "RP", "CR"]
+CRITICAL_FIELDS = ["LA", "DT", "AB", "RP/C1", "DE"]
+CRITICAL_MIN = 0.90
+
+
+def _availability(d: pd.DataFrame) -> dict:
+    out = {f: float(_known(d[f].astype(str).where(d[f].notna(), "")).mean()) if f in d else 0.0
+           for f in AUDIT_FIELDS}
+    rp = _known(d["RP"].astype(str)) if "RP" in d else pd.Series(False, index=d.index)
+    c1 = _known(d["C1"].astype(str)) if "C1" in d else pd.Series(False, index=d.index)
+    out["RP/C1"] = float((rp | c1).mean()) if len(d) else 0.0
+    return out
+
+
+def field_audit(frames: list[pd.DataFrame]) -> dict:
+    """Disponibilidad (%) de los campos por base y por archivo, y campos críticos por debajo del 90 %."""
+    raw = pd.concat(frames, ignore_index=True)
+    by_db = {db: _availability(g) for db, g in raw.groupby("DB")}
+    by_file = {f"{fn} ({g['DB'].iloc[0]})": {**_availability(g), "_n": int(len(g))} for fn, g in raw.groupby("FILE")}
+    low = [{"db": db, "field": f, "pct": round(100 * v[f], 1)} for db, v in by_db.items()
+           for f in CRITICAL_FIELDS if v[f] < CRITICAL_MIN]
+    pct = lambda d: {k: round(100 * v, 1) if not k.startswith("_") else v for k, v in d.items()}  # noqa: E731
+    return {"by_db": {k: pct(v) for k, v in by_db.items()}, "by_file": {k: pct(v) for k, v in by_file.items()},
+            "critical": CRITICAL_FIELDS, "critical_min": int(100 * CRITICAL_MIN), "critical_low": low}
+
+
+# ------------------------------------------------------ términos de la ecuación de búsqueda
+_FIELD_TAG = re.compile(r"\b(TITLE-ABS-KEY|TITLE-ABS|TITLE|ABS|KEY|AUTHKEY|INDEXTERMS|ALL|TS|TI|AB|AK|KP|ALL)\s*=?\s*",
+                        re.I)
+_LIMITS = re.compile(r"\b(AND\s+(NOT\s+)?)?(LIMIT-TO|EXCLUDE|PUBYEAR|DOCTYPE|LANGUAGE|SUBJAREA|SRCTYPE|PUBSTAGE|"
+                     r"OA|AFFILCOUNTRY|EXACTKEYWORD|PY|DT|LA|WC|SU|CU|OG|SO|DOP)\b\s*(=|>|<|>=|<=)?\s*"
+                     r"(\((?:[^()]|\([^()]*\))*\)|\d{4}|\"[^\"]*\")", re.I)
+_OPS = {"and", "or", "not", "near", "same", "pre", "w", "and not"}
+
+
+def extract_query_terms(*equations: str) -> list[str]:
+    """Términos de las ecuaciones de búsqueda (Scopus/WoS) sin operadores, comodines, etiquetas de campo ni
+    límites; se conservan las expresiones compuestas entre comillas. Se omiten los términos excluidos (NOT)."""
+    terms = []
+    for eq in equations:
+        if not eq or not eq.strip():
+            continue
+        q = _LIMITS.sub(" ", eq)
+        q = _FIELD_TAG.sub(" ", q)
+        # quitar los grupos excluidos: NOT (…) o AND NOT (…), y NOT término
+        while True:
+            m = re.search(r"\bNOT\s*\(", q, re.I)
+            if not m:
+                break
+            depth, i = 0, m.end() - 1
+            while i < len(q):
+                depth += q[i] == "("
+                depth -= q[i] == ")"
+                if depth == 0:
+                    break
+                i += 1
+            q = q[:m.start()] + " " + q[i + 1:]
+        q = re.sub(r"\bNOT\s+(\"[^\"]*\"|\S+)", " ", q, flags=re.I)
+        for ph in re.findall(r"[\"{]([^\"}]+)[\"}]", q):
+            t = re.sub(r"[*?$]", "", ph).strip().lower()
+            if t:
+                terms.append(re.sub(r"\s+", " ", t))
+        q = re.sub(r"[\"{][^\"}]*[\"}]", " ", q)
+        for tok in re.split(r"[\s()]+", q):
+            t = re.sub(r"[*?$]", "", tok).strip().lower()
+            t = re.sub(r"^(w|pre|near)/\d+$", "", t)
+            if t and t not in _OPS and not re.fullmatch(r"[\d/=<>-]+", t) and len(t) > 1:
+                terms.append(t)
+    return list(dict.fromkeys(terms))

@@ -74,24 +74,32 @@ json.dumps(S.load(_f), ensure_ascii=False, default=str)
 }
 
 // ---------------------------------------------------------------- embeddings
-async function embed(texts) {
+const EMB_MODELS = {
+  "Xenova/all-MiniLM-L6-v2": { label: "all-MiniLM-L6-v2", size: "~90 MB" },
+  "Xenova/all-mpnet-base-v2": { label: "all-mpnet-base-v2", size: "~440 MB" },
+};
+
+async function embed(texts, model = EMB_MODEL) {
+  const info = EMB_MODELS[model] || { label: model, size: "" };
   try {
-    progress(0.0, "Descargando el modelo de lenguaje (MiniLM, ~90 MB la primera vez)…");
+    progress(0.0, `Descargando el modelo de lenguaje (${info.label}, ${info.size} la primera vez)…`);
     const { pipeline, env } = await import(TRANSFORMERS_URL);
     env.allowLocalModels = false;
     let device = "wasm";
     if (self.navigator?.gpu) {
       try { if (await navigator.gpu.requestAdapter()) device = "webgpu"; } catch (e) { /* wasm */ }
     }
-    const extractor = await pipeline("feature-extraction", EMB_MODEL, { device, dtype: "fp32" });
-    const n = texts.length, dim = 384, out = new Float32Array(n * dim), bs = 32;
+    const extractor = await pipeline("feature-extraction", model, { device, dtype: "fp32" });
+    const n = texts.length, bs = 32;
+    let dim = 0, out = null;
     for (let i = 0; i < n; i += bs) {
       const batch = texts.slice(i, i + bs);
       const t = await extractor(batch, { pooling: "mean", normalize: true });
+      if (!out) { dim = t.dims[t.dims.length - 1]; out = new Float32Array(n * dim); }
       out.set(t.data, i * dim);
       progress(i / n, `Embeddings ${Math.min(i + bs, n)} / ${n} (${device})`);
     }
-    return { data: out, dim, name: "all-MiniLM-L6-v2 (sentence-transformers, ONNX vía transformers.js)" };
+    return { data: out, dim, name: `${info.label} (sentence-transformers, ONNX vía transformers.js)` };
   } catch (e) {
     post("warn", { msg: "No se pudo usar el modelo de lenguaje (" + e.message + "). Se usa LSA (TF-IDF + SVD)." });
     const arr = await py.runPythonAsync(`_e = lsa_embeddings(S.texts()); _e.tobytes()`);
@@ -103,8 +111,16 @@ async function embed(texts) {
   }
 }
 
-async function umap(rows, nComponents, minDist, seed, label) {
-  const u = new UMAP({ nComponents, nNeighbors: 15, minDist, random: rng(seed) });
+// distancia coseno (los embeddings llegan normalizados, pero se calcula la general)
+function cosineDist(a, b) {
+  let d = 0, na = 0, nb = 0;
+  for (let i = 0; i < a.length; i++) { d += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
+  return 1 - d / (Math.sqrt(na * nb) || 1);
+}
+
+async function umap(rows, nComponents, minDist, seed, label, opts = {}) {
+  const u = new UMAP({ nComponents, nNeighbors: opts.nNeighbors || 15, minDist, random: rng(seed),
+    ...(opts.metric === "cosine" ? { distanceFn: cosineDist } : {}) });
   const nEpochs = u.initializeFit(rows);
   for (let i = 0; i < nEpochs; i++) {
     u.step();
@@ -134,27 +150,31 @@ async function run(cfg) {
   if (on("bertopic")) {
     stage("BERTopic: embeddings de los documentos");
     const texts = py.runPython("S.texts()").toJs();
-    const emb = await embed(texts);
+    const emb = await embed(texts, cfg.embedding_model);
     const n = texts.length, rows = [];
     for (let i = 0; i < n; i++) rows.push(Array.from(emb.data.subarray(i * emb.dim, (i + 1) * emb.dim)));
-    const runs = py.runPython("S.n_umap_runs()");
+    const us = JSON.parse(py.runPython("json.dumps(S.umap_settings())"));
+    const runs = us.seeds.length;
     const reduced = [];
     for (let r = 0; r < runs; r++) {
       stage(`BERTopic: UMAP ${r + 1} de ${runs}${r ? " (estabilidad)" : ""}`);
-      reduced.push(await umap(rows, 5, 0.0, cfg.seed + r, `UMAP ${r + 1}/${runs}`));
+      reduced.push(await umap(rows, us.n_components, us.min_dist, us.seeds[r], `UMAP ${r + 1}/${runs}`,
+        { metric: us.metric, nNeighbors: us.n_neighbors }));
     }
     stage("BERTopic: mapa 2D de documentos");
-    const xy = await umap(rows, 2, 0.1, cfg.seed, "UMAP 2D");
+    const xy = await umap(rows, 2, us.map_2d.min_dist, us.map_2d.seed, "UMAP 2D", { metric: us.metric, nNeighbors: us.n_neighbors });
     stage("BERTopic: HDBSCAN y c-TF-IDF");
     py.globals.set("_red", reduced);
     py.globals.set("_xy", xy);
     py.globals.set("_emb_name", emb.name);
     await py.runPythonAsync(`
 _n = len(S.texts())
-_reds = [np.frombuffer(r.to_bytes(), dtype=np.float32).reshape(_n, 5) for r in _red]
+_reds = [np.frombuffer(r.to_bytes(), dtype=np.float32).reshape(_n, -1) for r in _red]
 _xy2 = np.frombuffer(_xy.to_bytes(), dtype=np.float32).reshape(_n, 2)
-S.run_bertopic(_reds, _xy2, _emb_name)
+_bt = S.run_bertopic(_reds, _xy2, _emb_name)
 `);
+    const bt = JSON.parse(py.runPython("json.dumps(_bt)"));
+    if (bt.warning) post("warn", { msg: bt.warning });
   }
   stage("Generando figuras y tablas");
   await render();
@@ -174,9 +194,11 @@ async function render() {
 json.dumps({k: S.table_json(k) for k in ["T1_main_information", "T2_top_sources", "T3_top_authors",
             "T4_countries", "T5_keywords", "T6_LDA_topics", "T7_BERTopic_topics", "T8_model_metrics",
             "doc_agreement", "T9_topic_alignment", "T8b_inference", "T10_most_cited", "T11_thematic_map",
-            "T12_expert_validation"]}, ensure_ascii=False, default=str)`));
+            "T12_expert_validation", "topic_best_matches", "tau_sensitivity", "T14_bibliographic_coupling", "periods",
+            "merge_conflicts"]}, ensure_ascii=False, default=str)`));
   const labels = JSON.parse(py.runPython("json.dumps(S.topic_labels(), ensure_ascii=False)"));
-  post("results", { figs: out, tables, labels }, transfer);
+  const quality = JSON.parse(py.runPython("json.dumps(S.quality_checks(), ensure_ascii=False, default=str)"));
+  post("results", { figs: out, tables, labels, quality }, transfer);
 }
 
 async function setLabels(labels, aiUsed) {
@@ -263,8 +285,10 @@ async function proposeTitles(meta) {
   post("titles", { titles: JSON.parse(out) });
 }
 
-async function scriptPackage(meta) {
-  await callPy("_b = S.script_package(json.loads(_meta))", { _meta: JSON.stringify(meta || {}) });
+async function scriptPackage(meta, cfg) {
+  // con cfg (antes de ejecutar): el paquete lleva la configuración elegida en la interfaz
+  await callPy("_b = S.script_package(json.loads(_meta), json.loads(_cfg) if _cfg else None)",
+    { _meta: JSON.stringify(meta || {}), _cfg: cfg ? JSON.stringify(cfg) : "" });
   await bytesOut("_b", "BiblioTopic_script.zip", "application/zip");
 }
 
@@ -293,7 +317,11 @@ self.onmessage = async (ev) => {
     else if (cmd === "ai_set") await aiSet(ev.data.texts);
     else if (cmd === "report") await buildReport(ev.data.meta, ev.data.sections, ev.data.opts);
     else if (cmd === "zip") await zipAll(ev.data.opts, ev.data.meta);
-    else if (cmd === "script") await scriptPackage(ev.data.meta);
+    else if (cmd === "script") await scriptPackage(ev.data.meta, ev.data.cfg);
+    else if (cmd === "estimate") {
+      const e = JSON.parse(await callPy("json.dumps(S.estimate(json.loads(_cfg)))", { _cfg: JSON.stringify(ev.data.cfg) }));
+      post("estimate", { estimate: e });
+    }
     else if (cmd === "titles") await proposeTitles(ev.data.meta);
   } catch (e) {
     // De un error de Python se muestra solo el mensaje final (p. ej., «ValueError: …»), no la traza completa

@@ -77,3 +77,38 @@ def test_agreement_denominators():
     a_all = ST.bootstrap_agreement(lda.dominant, bert.topics, B=30)
     a_ok = ST.bootstrap_agreement(lda.dominant[ok], bert.topics_raw[ok], B=30)
     assert a_all != a_ok  # dos poblaciones distintas con sus propios intervalos
+
+
+def test_mann_kendall_and_sen():
+    years = np.repeat(np.arange(2010, 2020), 20)
+    t = (years - 2010) / 10
+    theta = np.c_[0.2 + 0.6 * t, 0.8 - 0.6 * t]
+    theta = theta + np.random.default_rng(5).normal(0, 0.01, theta.shape)
+    out, _ = topic_trends(theta, pd.Series(years), 10, test="mann_kendall")
+    assert list(out["Trend"]) == ["Hot", "Cold"] and (out["Test"] == "Mann-Kendall").all()
+    assert out["Sen slope"][0] > 0 > out["Sen slope"][1]
+    assert (out["Sen CI low"] <= out["Sen slope"]).all()
+
+
+def test_permutation_null_and_fmt_p():
+    from bibliotopic.stats import fmt_p, permutation_null_cosine
+    rng = np.random.default_rng(0)
+    A = rng.random((3, 50))
+    B = np.vstack([A[0] + rng.random(50) * 0.05, rng.random((2, 50))])
+    null = permutation_null_cosine(A, B, 200, 1)
+    assert null["p"][0, 0] < 0.05 and null["p"].shape == (3, 3)
+    assert fmt_p(0.0001) == "< 0.001" and fmt_p(0.0274) == "0.027"
+
+
+def test_fleiss_kappa_known_value():
+    from bibliotopic.validation import fleiss_kappa
+    perfect = np.array([["a", "b", "c"], ["a", "b", "c"], ["a", "b", "c"]], dtype=object)
+    assert abs(fleiss_kappa(perfect) - 1.0) < 1e-9
+
+
+def test_bca_interval_contains_point():
+    from bibliotopic.stats import ci_from_boot
+    rng = np.random.default_rng(1)
+    boots = rng.normal(0.5, 0.05, 1000)
+    lo, hi = ci_from_boot(boots, 0.52, "bca", jack=rng.normal(0.52, 0.01, 50))
+    assert lo < 0.52 < hi

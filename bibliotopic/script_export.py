@@ -2,7 +2,7 @@
 
 Contenido del .zip:
   analisis_bibliotopic.py   script principal, comentado paso a paso
-  config.json               parámetros, semilla, nombres de temas y metadatos del análisis
+  config.json               configuración efectiva (config_version, perfil, parámetros, semillas, archivos y MD5)
   bibliotopic/              código de análisis (el mismo que se ejecutó en el navegador)
   requirements.txt          librerías con las versiones utilizadas
   LEEME.md                  instrucciones
@@ -18,14 +18,18 @@ from pathlib import Path
 
 SCRIPT = r'''"""Análisis bibliométrico y de modelado de temas (LDA y BERTopic) generado con BiblioTopic.
 
-Reproduce el análisis realizado en la aplicación web con los mismos parámetros (config.json).
+Reproduce el análisis de la aplicación web con la configuración de config.json.
 
 Uso:
     pip install -r requirements.txt
-    python analisis_bibliotopic.py            # lee las exportaciones de la carpeta datos/
+    python analisis_bibliotopic.py                 # lee las exportaciones de la carpeta datos/
+    python analisis_bibliotopic.py --nucleos 8     # ajustes de LDA en paralelo (selección de K y estabilidad)
+    python analisis_bibliotopic.py otra/carpeta    # otra carpeta de datos
 
-Los resultados (figuras, tablas y borrador en Word) se guardan en la carpeta resultados/.
+Los resultados (figuras, tablas, run_config.json y borrador en Word) se guardan en resultados/.
 """
+import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -37,8 +41,14 @@ from bibliotopic.bert_model import lsa_embeddings
 
 BASE = Path(__file__).resolve().parent
 CONFIG = json.loads((BASE / "config.json").read_text(encoding="utf-8"))
-DATOS = Path(sys.argv[1]) if len(sys.argv) > 1 else BASE / "datos"
-SALIDA = BASE / "resultados"
+ap = argparse.ArgumentParser()
+ap.add_argument("datos", nargs="?", default=str(BASE / "datos"))
+ap.add_argument("--nucleos", type=int, default=1, help="procesos para los ajustes de LDA (por defecto 1)")
+args = ap.parse_args()
+DATOS, SALIDA = Path(args.datos), BASE / "resultados"
+PARAMS = dict(CONFIG["parameters"])
+# config.json sin config_version (versión 1 de BiblioTopic): se reproducen los valores de esa versión
+PARAMS.setdefault("config_version", CONFIG.get("config_version", 1))
 
 
 def progreso(p, msg):
@@ -46,9 +56,8 @@ def progreso(p, msg):
 
 
 # 1. Lectura y fusión de las exportaciones de Scopus (CSV) y Web of Science (texto delimitado por tabulaciones).
-#    Se eliminan duplicados por DOI y, en su defecto, por título + año.
-#    El orden de lectura importa (decide qué registro se conserva entre duplicados y el orden de los documentos):
-#    se usa el mismo de la aplicación, Scopus primero y después los lotes de WoS.
+#    Duplicados por DOI o por título + año (±1), con agrupación transitiva y campos complementados.
+#    Se usa el mismo orden de archivos que en la aplicación y se comprueba el MD5 registrado de cada archivo.
 def es_scopus(p):
     if p.suffix.lower() == ".csv":
         return True
@@ -59,41 +68,51 @@ def es_scopus(p):
     return False
 
 
+REG = {f["file"]: f for f in CONFIG.get("input_files_detail") or []}
 ORDEN = {n: i for i, n in enumerate(CONFIG.get("input_files") or [])}
 archivos = sorted((p for p in DATOS.iterdir() if p.suffix.lower() in (".csv", ".txt", ".tsv", ".zip")),
                   key=lambda p: (ORDEN.get(p.name, len(ORDEN)), 0 if es_scopus(p) else 1, p.name))
 if not archivos:
     sys.exit(f"No hay exportaciones en {DATOS}. Copie allí los archivos de Scopus y WoS "
-             f"(en el análisis original: {', '.join(CONFIG['input_files']) or 'no registrados'}).")
+             f"(en el análisis original: {', '.join(CONFIG.get('input_files') or []) or 'ver config.json'}).")
+for p in archivos:
+    md5 = hashlib.md5(p.read_bytes()).hexdigest()
+    if p.name in REG and REG[p.name].get("md5") and REG[p.name]["md5"] != md5:
+        print(f"AVISO: {p.name} no coincide con el archivo original (MD5 distinto); los resultados pueden variar.")
 S = pipeline.Session()
 resumen = S.load([(p.name, p.read_bytes()) for p in archivos])
 print("Registros:", resumen["stats"])
 
-# 2. Filtros de elegibilidad (años, tipos de documento, idiomas, resumen) y preprocesamiento del texto
-#    (minúsculas, palabras vacías, singularización, bigramas por NPMI, vocabulario por frecuencia documental).
-print("Preprocesamiento:", S.prepare(CONFIG["parameters"]))
+# 2. Criterios de elegibilidad (sin descartar registros por campos ausentes) y preprocesamiento del texto.
+print("Preprocesamiento:", S.prepare(PARAMS))
 
-# 3. LDA: selección de K con CaoJuan2009, Arun2010, Deveaud2014 y NPMI; modelo final y estabilidad entre semillas.
+# 3. LDA: selección de K en dos etapas (5 métricas promediadas en varias semillas), modelo final y estabilidad.
 if S.on("lda"):
-    print("LDA:", S.run_lda(progreso))
+    if args.nucleos > 1:
+        from concurrent.futures import ProcessPoolExecutor
+        with ProcessPoolExecutor(args.nucleos) as ex:
+            print("LDA:", S.run_lda(progreso, executor=ex))
+    else:
+        print("LDA:", S.run_lda(progreso))
 
-# 4. BERTopic: embeddings de los documentos -> UMAP (5D) -> HDBSCAN -> c-TF-IDF con el mismo vocabulario que LDA.
+# 4. BERTopic: embeddings -> UMAP (coseno, 5D; una proyección por semilla de estabilidad) -> HDBSCAN -> c-TF-IDF.
 if S.on("bertopic"):
     from umap import UMAP
     textos = S.texts()
-    if CONFIG["embedding"]["kind"] == "minilm":
-        # Mismo modelo que en el navegador (all-MiniLM-L6-v2), aquí mediante sentence-transformers.
+    modelo = PARAMS.get("embedding_model") or "Xenova/all-MiniLM-L6-v2"
+    if CONFIG["embedding"]["kind"] != "lsa":
+        # Mismo modelo que en el navegador, aquí mediante sentence-transformers
         from sentence_transformers import SentenceTransformer
-        emb = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2").encode(
+        emb = SentenceTransformer("sentence-transformers/" + modelo.split("/")[-1]).encode(
             textos, normalize_embeddings=True, show_progress_bar=True)
-        nombre = "all-MiniLM-L6-v2 (sentence-transformers)"
+        nombre = modelo.split("/")[-1] + " (sentence-transformers)"
     else:
         emb, nombre = lsa_embeddings(textos), "LSA fallback (TF-IDF + SVD)"
-    semilla = S.cfg["seed"]
-    # Una proyección UMAP por réplica de estabilidad (semilla + r) y una proyección 2D para el mapa de documentos.
-    reducciones = [UMAP(n_neighbors=15, n_components=5, min_dist=0.0, random_state=semilla + r).fit_transform(emb)
-                   for r in range(S.n_umap_runs())]
-    xy = UMAP(n_neighbors=15, n_components=2, min_dist=0.1, random_state=semilla).fit_transform(emb)
+    us = S.umap_settings()
+    reducciones = [UMAP(n_neighbors=us["n_neighbors"], n_components=us["n_components"], min_dist=us["min_dist"],
+                        metric=us["metric"], random_state=s).fit_transform(emb) for s in us["seeds"]]
+    xy = UMAP(n_neighbors=us["n_neighbors"], n_components=2, min_dist=us["map_2d"]["min_dist"],
+              metric=us["metric"], random_state=us["map_2d"]["seed"]).fit_transform(emb)
     print("BERTopic:", S.run_bertopic([np.asarray(r) for r in reducciones], np.asarray(xy), nombre))
 
 # 5. Nombres de los temas asignados por los autores en la aplicación.
@@ -109,29 +128,35 @@ if hojas:
 if CONFIG.get("ai_texts"):
     S.set_ai_text(CONFIG["ai_texts"])
 
-# 8. Figuras (PNG, PDF y TIFF 600 dpi), tablas (Excel/CSV) y borrador del artículo en Word.
+# 8. Figuras (PNG, PDF y TIFF 600 dpi), tablas, run_config.json, controles de calidad y borrador en Word.
 S.render(str(SALIDA), final=True)
+for c in S.quality_checks():
+    print(f"  [{c['level']}] {c['check']}: {c['detail']}")
 report.build(S, str(SALIDA / "Borrador_Metodos_Resultados.docx"), CONFIG["document"], CONFIG.get("sections"))
 print("Resultados en:", SALIDA)
 '''
 
-README = """# Script del análisis — BiblioTopic
+README = """# Script del análisis — BiblioTopic {version}
 
-Este paquete contiene el código y la configuración exacta con que se realizó el análisis en la aplicación web
-BiblioTopic ({date}). Sirve como material suplementario del artículo y permite reproducir los resultados.
+Este paquete contiene el código y la configuración exacta con que se realizó (o se realizará) el análisis en la
+aplicación web BiblioTopic ({date}). Sirve como material suplementario del artículo y permite reproducir los
+resultados.
 
 ## Contenido
 
 | Archivo | Descripción |
 |---|---|
 | `analisis_bibliotopic.py` | Script principal, comentado paso a paso. |
-| `config.json` | Parámetros del análisis, semilla aleatoria, nombres de los temas y datos del documento. |
+| `config.json` | Configuración efectiva (versión {config_version}, perfil «{profile}»): parámetros, semillas, archivos de entrada con su MD5, ecuaciones de búsqueda y disponibilidad de campos por base. |
 | `bibliotopic/` | Código de análisis (el mismo que se ejecutó en el navegador). |
 | `requirements.txt` | Librerías de Python con las versiones utilizadas. |
 | `datos/` | Copie aquí las exportaciones de Scopus y Web of Science. |
 
-Por razones de licencia, los registros de Scopus y Web of Science **no se incluyen**. Archivos usados en el análisis
-original: {files}.
+Por razones de licencia, los registros de Scopus y Web of Science **no se incluyen**.
+
+## Archivos de entrada del análisis original
+
+{files}
 
 ## Cómo ejecutarlo
 
@@ -140,13 +165,15 @@ original: {files}.
 
        pip install -r requirements.txt
 
-3. Copie las exportaciones de Scopus (CSV) y Web of Science (.txt) en la carpeta `datos/`.
+3. Copie las exportaciones de Scopus (CSV) y Web of Science (.txt) en la carpeta `datos/`, con sus nombres
+   originales (el script comprueba el MD5 de cada archivo y avisa si no coincide).
 4. Opcional: copie las hojas de validación completadas por los evaluadores en una carpeta `validacion/`.
-5. Ejecute:
+5. Ejecute, con tantos núcleos como tenga su equipo para acelerar la selección de K y la estabilidad de LDA:
 
-       python analisis_bibliotopic.py
+       python analisis_bibliotopic.py --nucleos 8
 
-Los resultados se guardan en `resultados/`.
+Los resultados se guardan en `resultados/`. Tiempo estimado con un núcleo: {local_minutes} (con N núcleos,
+aproximadamente esa cifra dividida entre N en la parte de LDA).
 
 ## Parámetros principales
 
@@ -154,71 +181,71 @@ Los resultados se guardan en `resultados/`.
 
 ## Reproducibilidad
 
-- Con los mismos archivos, la semilla indicada y las versiones de `requirements.txt`, el filtrado, la bibliometría
-  y LDA dan los mismos resultados que en la aplicación. El script lee los archivos en el mismo orden que la
-  aplicación (Scopus primero y después los lotes de WoS); conserve los nombres originales de los archivos.
+- Con los mismos archivos, las semillas indicadas y las versiones de `requirements.txt`, la depuración, la
+  bibliometría y LDA dan los mismos resultados que en la aplicación. El script lee los archivos en el mismo orden
+  que la aplicación (Scopus primero y después los lotes de WoS).
 - En BERTopic, el navegador usa transformers.js y umap-js; el script usa sentence-transformers y umap-learn con el
-  mismo modelo ({embedding}) y los mismos parámetros. Las implementaciones de UMAP no son idénticas, por lo que la
-  composición exacta de los grupos de BERTopic puede variar ligeramente; los temas principales deberían coincidir.
+  mismo modelo ({embedding}), la misma métrica (coseno) y las mismas semillas. Las implementaciones de UMAP no son
+  idénticas, por lo que la composición exacta de los grupos puede variar ligeramente.
+- Un `config.json` sin el campo `config_version` (versión 1 de BiblioTopic) se ejecuta con los valores de esa
+  versión para reproducir análisis anteriores.
 - Si el número de temas se eligió automáticamente, la selección se repite con el mismo procedimiento. Para fijarlo,
   cambie `"k"` en `config.json` (en el análisis original se obtuvo K = {k}).
 """
 
 
 def _params_md(c, k):
+    yrs = f"{c.get('year_min') or 'todos'} – {c.get('year_max') or 'todos'}"
     rows = [
-        ("Años", f"{c.get('year_min') or 'todos'} – {c.get('year_max') or 'todos'}"),
+        ("Perfil", c.get("profile")),
+        ("Años", yrs + (" (las tendencias excluyen el año en curso)" if c.get("exclude_incomplete_year", True) else "")),
         ("Tipos de documento", ", ".join(c.get("doc_types") or []) or "todos"),
         ("Idiomas", ", ".join(c.get("languages") or []) or "todos"),
+        ("Registros sin idioma, tipo o año", "se conservan" if all(c.get(x, True) for x in (
+            "keep_unknown_language", "keep_unknown_type", "keep_unknown_year")) else "algunos se excluyen (ver config.json)"),
         ("Análisis", ", ".join(c.get("analyses") or [])),
-        ("K de LDA", f"fijo = {c['k']}" if c.get("k") else f"automático entre {c.get('k_min')} y {c.get('k_max')} "
-                                                            f"(paso {c.get('k_step')}); seleccionado K = {k}"),
+        ("K de LDA", f"fijo = {c['k']}" if c.get("k") else
+         f"automático: búsqueda gruesa {c.get('k_min')}–{c.get('k_max')} (paso {c.get('k_step')}) y fina ±"
+         f"{c.get('k_fine_window')}, con {c.get('k_seeds')} semillas por K; seleccionado K = {k if k else '—'}"),
+        ("LDA", f"inferencia {c.get('lda_method')}, máximo {c.get('lda_max_iter')} iteraciones; priors α y η = 1/K "
+                "salvo que se indique otro valor"),
+        ("Estabilidad", f"LDA {c.get('n_stab_lda')} semillas; BERTopic {c.get('n_stab_bert')} semillas de UMAP"),
+        ("Bootstrap / permutaciones", f"{c.get('n_boot')} remuestreos ({c.get('boot_method')}) / {c.get('n_perm')}"),
+        ("Tendencias", "Mann-Kendall con pendiente de Sen" if c.get("trend_test") == "mann_kendall" else "regresión lineal"),
         ("Frecuencia documental", f"mínima {c.get('min_df')}, máxima {c.get('max_df')}"),
-        ("Semilla aleatoria", c.get("seed")),
-        ("Remuestreos bootstrap", c.get("n_boot")),
+        ("Semilla global", c.get("seed")),
     ]
     return "\n".join(f"- **{a}:** {b}" for a, b in rows)
 
 
-def build_package(S, meta=None) -> bytes:
+def build_package(S, meta=None, cfg=None) -> bytes:
+    """cfg: configuración elegida en la interfaz antes de ejecutar el análisis (opcional)."""
+    from .pipeline import __version__, estimate_runtime
     meta = dict(meta or {})
     pkg = Path(__file__).resolve().parent
-    emb = (S.emb_name or "").lower()
-    kind = "minilm" if "minilm" in emb else ("lsa" if emb else "minilm")
-    labels = {}
-    for name, r in (("lda", S.lda), ("bert", S.bert)):
-        if r is not None and getattr(r, "custom_labels", False):
-            labels[name] = [l.split(":", 1)[1].strip() if ":" in l else l for l in r.labels]
-            labels[name + "_short"] = S._shorts(r)
-    k = S.lda.k if S.lda is not None else None
-    params = {key: v for key, v in S.cfg.items()}
-    config = {
-        "generated": _dt.datetime.now().isoformat(timespec="seconds"),
-        "generator": "BiblioTopic (https://github.com/CarlosSalasMacias/BiblioTopic)",
-        "input_files": list(getattr(S, "input_files", []) or []),
-        "parameters": params,
-        "lda_k_selected": k,
-        "embedding": {"kind": kind, "used_in_browser": S.emb_name or ""},
-        "topic_labels": labels,
-        "ai_texts": {kk: v for kk, v in (getattr(S, "ai", None) or {}).items() if kk in ("discussion", "labels_used")},
-        "document": {kk: meta.get(kk, "") for kk in ("topic_name", "title", "query", "search_date", "composite",
-                                                      "ai_model", "ai_title")},
-        "sections": meta.get("sections"),
-        "versions_used": S.versions,
-    }
+    config = S.effective_config(meta, cfg)
+    kind = config["embedding"]["kind"]
+    c = config["parameters"]
     pins = {"pandas", "numpy", "scikit-learn", "scipy", "networkx", "matplotlib"}
     req = [f"{p}=={S.versions[p]}" for p in sorted(pins) if S.versions.get(p)]
     req += ["openpyxl>=3.1", "python-docx>=1.1", "pycountry>=23.12", "adjustText>=1.0", "Pillow>=10",
             "umap-learn>=0.5.5"]
-    if kind == "minilm":
+    if kind != "lsa":
         req.append("sentence-transformers>=2.7")
+    files = config.get("input_files_detail") or []
+    files_md = ("\n".join(f"- `{f['file']}`: {f.get('records', '?')} registros; MD5 `{f.get('md5') or 'no registrado'}`"
+                          for f in files)
+                or "\n".join(f"- `{n}`" for n in config.get("input_files") or []) or "- (no registrados)")
+    n_docs = len(S.df) if getattr(S, "df", None) is not None else int(
+        (S.merged["AB"].str.split().str.len().fillna(0) >= 20).sum())
+    est = estimate_runtime(n_docs, c, browser=False)["minutes"]
     readme = README.format(
-        date=_dt.date.today().isoformat(),
-        files=", ".join(config["input_files"]) or "no registrados",
-        params=_params_md(S.cfg, k),
-        embedding="all-MiniLM-L6-v2" if kind == "minilm" else "LSA (TF-IDF + SVD)",
-        k=k if k is not None else "—",
-    )
+        version=__version__, date=_dt.date.today().isoformat(), config_version=config["config_version"],
+        profile=c.get("profile"), files=files_md, params=_params_md(c, config.get("lda_k_selected")),
+        embedding=(c.get("embedding_model") or "all-MiniLM-L6-v2").split("/")[-1] if kind != "lsa"
+        else "LSA (TF-IDF + SVD)",
+        k=config.get("lda_k_selected") or "—",
+        local_minutes=f"~{est:.0f} min" if est < 90 else f"~{est / 60:.1f} h")
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("BiblioTopic_script/analisis_bibliotopic.py", SCRIPT)
@@ -226,7 +253,7 @@ def build_package(S, meta=None) -> bytes:
         z.writestr("BiblioTopic_script/requirements.txt", "\n".join(req) + "\n")
         z.writestr("BiblioTopic_script/LEEME.md", readme)
         z.writestr("BiblioTopic_script/datos/LEEME.txt",
-                   "Copie aquí las exportaciones de Scopus (CSV) y Web of Science (.txt).\n")
+                   "Copie aquí las exportaciones de Scopus (CSV) y Web of Science (.txt) con sus nombres originales.\n")
         for p in sorted(pkg.rglob("*")):
             if p.is_file() and "__pycache__" not in p.parts and p.suffix in (".py", ".json"):
                 z.write(p, "BiblioTopic_script/bibliotopic/" + str(p.relative_to(pkg)))

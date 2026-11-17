@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BiblioTopic</title>
 <meta name="description" content="Bibliometría, LDA, BERTopic y HJ-Biplot sobre corpus de Web of Science y Scopus, con borrador de Métodos y Resultados.">
-<link rel="stylesheet" href="css/style.css?v=20261113">
+<link rel="stylesheet" href="css/style.css?v=20261117">
 </head>
 <body>
 <header>
@@ -38,8 +38,36 @@
         <em id="l-wos">Ningún archivo</em>
       </label>
     </div>
-    <p class="hint">WoS: <em>Export → Tab delimited file</em>, contenido <em>Full Record and Cited References</em>.
-      Scopus: <em>Export → CSV</em> con todos los campos.</p>
+    <details class="export-help" open>
+      <summary>Cómo exportar para que no falten campos</summary>
+      <ul class="hint">
+        <li><b>Scopus:</b> <em>Export → CSV</em> marcando <b>todos los grupos de campos</b>: <em>Citation
+          information</em>, <em>Bibliographical information</em> (incluye <b>Language of Original Document</b> y
+          <b>Correspondence Address</b>), <em>Abstract &amp; keywords</em> (incluye <b>Index Keywords</b>),
+          <em>Funding details</em> y <em>Other information</em> (incluye <b>References</b>).</li>
+        <li><b>Web of Science:</b> <em>Export → Tab delimited file</em>, contenido <b>Full Record and Cited
+          References</b> (lotes de hasta 1 000 registros; cargue todos los lotes).</li>
+      </ul>
+    </details>
+    <details class="search-box" open>
+      <summary>Estrategia de búsqueda (para el informe y para excluir sus términos del texto)</summary>
+      <div class="grid">
+        <label class="wide">Ecuación exacta en Scopus <textarea id="q-scopus" rows="2"
+          placeholder='TITLE-ABS-KEY ( coffee OR "coffea arabica" ) AND PUBYEAR > 1999'></textarea></label>
+        <label class="wide">Ecuación exacta en Web of Science <textarea id="q-wos" rows="2"
+          placeholder='TS=(coffee OR "coffea arabica")'></textarea></label>
+        <label>Fecha de la búsqueda <input type="date" id="q-date"></label>
+        <div class="wide">Índices de WoS consultados <span id="q-idx" class="chips">
+          <label><input type="checkbox" value="SCI-EXPANDED"> SCI-E</label>
+          <label><input type="checkbox" value="SSCI"> SSCI</label>
+          <label><input type="checkbox" value="A&amp;HCI"> A&amp;HCI</label>
+          <label><input type="checkbox" value="ESCI"> ESCI</label>
+          <label><input type="checkbox" value="CPCI-S"> CPCI-S</label>
+          <label><input type="checkbox" value="CPCI-SSH"> CPCI-SSH</label>
+          <label><input type="checkbox" value="BKCI-S"> BKCI-S</label>
+          <label><input type="checkbox" value="BKCI-SSH"> BKCI-SSH</label></span></div>
+      </div>
+    </details>
     <div class="row">
       <button id="b-load" class="primary" disabled>Cargar y fusionar</button>
       <label class="btnlike">Abrir proyecto guardado
@@ -51,39 +79,83 @@
   <!-- 2. ANÁLISIS -->
   <section class="card" id="s-analyses" hidden>
     <h2><span class="n">2</span> Análisis a realizar</h2>
+    <div class="profile-row">
+      <label>Perfil
+        <select id="o-profile">
+          <option value="publication" selected>Publicación (recomendado para revistas Q1)</option>
+          <option value="quick">Exploración rápida</option>
+        </select></label>
+      <span id="estimate" class="hint"></span>
+    </div>
+    <div id="estimate-warn"></div>
     <div id="analyses" class="checks"></div>
     <details>
       <summary>Opciones avanzadas</summary>
       <div class="grid">
         <label>Año desde <input type="number" id="o-ymin"></label>
         <label>Año hasta <input type="number" id="o-ymax"></label>
-        <label class="wide">Tipos de documento <span id="o-dt" class="chips"></span></label>
-        <label class="wide">Idiomas <span id="o-la" class="chips"></span></label>
-        <label class="wide">Términos de la búsqueda a excluir del texto (separados por coma)
-          <input type="text" id="o-q" placeholder="p. ej.: coffee, coffea"></label>
+        <label class="wide">Tipos de documento (vocabulario común WoS/Scopus) <span id="o-dt" class="chips"></span></label>
+        <label class="wide">Idiomas (se conserva el registro si alguno de sus idiomas está admitido) <span id="o-la" class="chips"></span></label>
+        <label class="wide"><input type="checkbox" id="o-unk-year"> Excluir registros sin año de publicación (por defecto se conservan)</label>
+        <label class="wide">Términos de la búsqueda a excluir del texto (se rellenan a partir de las ecuaciones; editables)
+          <input type="text" id="o-q" placeholder="p. ej.: coffee, coffea arabica"></label>
         <label class="wide">Palabras vacías adicionales (separadas por coma)
           <input type="text" id="o-sw"></label>
-        <label class="wide">Sinónimos de palabras clave (formato: <em>variante, variante = término</em>; separe con «;»)
-          <textarea id="o-syn" rows="2" placeholder="arabica coffee, coffee arabica = coffea arabica; robusta coffee = coffea canephora"></textarea></label>
-        <label>K mínimo <input type="number" id="o-kmin" value="5" min="2"></label>
-        <label>K máximo <input type="number" id="o-kmax" value="30" min="3"></label>
-        <label>Paso <input type="number" id="o-kstep" value="5" min="1"></label>
+        <label class="wide">Sinónimos (CSV «término,forma_canónica», una línea por par; se aplican a las palabras clave y al vocabulario de los modelos)
+          <textarea id="o-syn" rows="3" placeholder="arabica coffee,coffea arabica&#10;robusta coffee,coffea canephora"></textarea>
+          <span class="row"><label class="btnlike small">Cargar CSV de sinónimos <input type="file" id="f-syn" accept=".csv,.txt" hidden></label>
+          <button type="button" id="b-syn-template" class="small">Descargar plantilla</button></span></label>
+        <label>Citas de los duplicados
+          <select id="o-tc"><option value="max">Máximo entre bases</option><option value="WoS">WoS</option><option value="Scopus">Scopus</option></select></label>
+        <h4 class="wide">LDA</h4>
+        <label>K mínimo <input type="number" id="o-kmin" min="2"></label>
+        <label>K máximo <input type="number" id="o-kmax" min="3"></label>
+        <label>Paso (búsqueda gruesa) <input type="number" id="o-kstep" min="1"></label>
+        <label>Búsqueda fina ± (0 = sin búsqueda fina) <input type="number" id="o-kfine" min="0" max="10"></label>
+        <label>Semillas por K <input type="number" id="o-kseeds" min="1" max="10"></label>
         <label>Fijar K (0 = automático) <input type="number" id="o-k" value="0" min="0"></label>
+        <label>Inferencia
+          <select id="o-ldamethod"><option value="batch">Batch (reproducible)</option><option value="online">Online (rápida)</option></select></label>
+        <label>Iteraciones máximas <input type="number" id="o-ldaiter" min="10" max="500"></label>
+        <label>Prior α (0 = 1/K) <input type="number" id="o-alpha" value="0" min="0" step="0.01"></label>
+        <label>Prior η (0 = 1/K) <input type="number" id="o-eta" value="0" min="0" step="0.01"></label>
+        <label>Réplicas de estabilidad LDA <input type="number" id="o-slda" min="1" max="20"></label>
+        <h4 class="wide">BERTopic</h4>
+        <label>Modelo de embeddings
+          <select id="o-emb"><option value="Xenova/all-MiniLM-L6-v2">all-MiniLM-L6-v2 (rápido, ~90 MB)</option>
+            <option value="Xenova/all-mpnet-base-v2">all-mpnet-base-v2 (más preciso, ~440 MB, ~5× más lento)</option></select></label>
         <label>Temas BERTopic
           <select id="o-bnr"><option value="lda">Igual que LDA</option><option value="auto">Automático (HDBSCAN)</option></select></label>
-        <label>Tamaño mínimo de grupo (0 = auto) <input type="number" id="o-mcs" value="0" min="0"></label>
-        <label>Réplicas de estabilidad LDA <input type="number" id="o-slda" value="3" min="1" max="10"></label>
-        <label>Réplicas de estabilidad BERTopic <input type="number" id="o-sbert" value="2" min="1" max="6"></label>
+        <label>Tamaño mínimo de grupo (0 = máx(15, 0.5 % de N)) <input type="number" id="o-mcs" value="0" min="0"></label>
+        <label>min_samples (0 = igual al tamaño mínimo) <input type="number" id="o-msamp" value="0" min="0"></label>
+        <label>Umbral de reasignación de outliers (c-TF-IDF; 0 = todos) <input type="number" id="o-othr" value="0" min="0" max="1" step="0.05"></label>
+        <label>Réplicas de estabilidad BERTopic (semillas de UMAP) <input type="number" id="o-sbert" min="1" max="20"></label>
+        <h4 class="wide">Comparación, inferencia y tiempo</h4>
+        <label>Remuestreos bootstrap <input type="number" id="o-boot" min="100" max="5000" step="100"></label>
+        <label>Tipo de intervalo
+          <select id="o-bootm"><option value="percentile">Percentil</option><option value="bca">BCa</option></select></label>
+        <label>Permutaciones (línea base nula del coseno) <input type="number" id="o-perm" min="0" max="5000" step="100"></label>
+        <label>τ fuerte (convergente) <input type="number" id="o-tau" value="0.5" step="0.05"></label>
+        <label>τ parcial <input type="number" id="o-taup" value="0.3" step="0.05"></label>
+        <label>Prueba de tendencia
+          <select id="o-trend"><option value="mann_kendall">Mann-Kendall + pendiente de Sen</option><option value="ols">Regresión lineal (OLS)</option></select></label>
+        <label>Periodos
+          <select id="o-pmode"><option value="width">Ancho fijo</option><option value="quantile">Nº similar de documentos</option><option value="custom">Personalizados</option></select></label>
         <label>Amplitud de periodos (años) <input type="number" id="o-pw" value="5" min="2"></label>
+        <label>Número de periodos (nº similar de documentos) <input type="number" id="o-np" value="5" min="3" max="10"></label>
+        <label class="wide">Periodos personalizados (p. ej.: 1990-2005, 2006-2015, 2016-2025) <input type="text" id="o-pcustom"></label>
         <label>Frecuencia documental mínima <input type="number" id="o-mindf" value="5" min="1"></label>
-        <label>Umbral de convergencia (coseno) <input type="number" id="o-tau" value="0.5" step="0.05"></label>
-        <label>Semilla aleatoria <input type="number" id="o-seed" value="42"></label>
-        <label>Remuestreos bootstrap <input type="number" id="o-boot" value="200" min="50" max="2000" step="50"></label>
+        <label>Semilla aleatoria global <input type="number" id="o-seed" value="42"></label>
         <label>Forma de los conglomerados (HJ-Biplot)
           <select id="o-shape"><option value="hull">Envolvente convexa</option><option value="ellipse">Elipse</option></select></label>
       </div>
     </details>
-    <button id="b-run" class="primary">Ejecutar análisis</button>
+    <div class="row">
+      <button id="b-run" class="primary">Ejecutar análisis</button>
+      <button id="b-script-pre" type="button">Descargar script con esta configuración</button>
+    </div>
+    <p class="hint">El script ejecuta el mismo análisis en Python en su computadora (con varios núcleos en paralelo),
+      útil para el perfil Publicación con corpus grandes.</p>
     <div id="run-status" hidden>
       <p id="stage" class="stage"></p>
       <div class="bar"><div id="bar"></div></div>
@@ -94,6 +166,7 @@
   <!-- 3. RESULTADOS -->
   <section class="card" id="s-results" hidden>
     <h2><span class="n">3</span> Resultados</h2>
+    <div id="quality"></div>
     <div id="tables"></div>
     <div id="labels-box" hidden>
       <h3>Nombre de los temas (en inglés)</h3>
@@ -139,8 +212,6 @@
         </div>
         <div id="title-opts" class="title-opts"></div>
       </div>
-      <label class="wide">Ecuación de búsqueda <textarea id="m-query" rows="2"></textarea></label>
-      <label>Fecha de la búsqueda <input type="text" id="m-date"></label>
     </div>
     <p><strong>Apartados a redactar</strong> <span class="hint">(texto en español; título, figuras y tablas en inglés)</span></p>
     <div id="sections" class="checks"></div>
@@ -177,6 +248,6 @@
 </main>
 <footer class="wrap">BiblioTopic · código abierto en
   <a href="https://github.com/CarlosSalasMacias/BiblioTopic">GitHub</a> · Diseñado por Carlos Salas-Macías &amp; Karime Montes-Escobar</footer>
-<script type="module" src="js/app.js?v=20261113"></script>
+<script type="module" src="js/app.js?v=20261117"></script>
 </body>
 </html>

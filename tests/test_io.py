@@ -24,13 +24,24 @@ def test_unknown_language_is_not_other_language():
     df = frame([rec(TI="a", AB="w " * 30, LA="English", PY=2020),
                 rec(TI="b", AB="w " * 30, LA="Spanish", PY=2020),
                 rec(TI="c", AB="w " * 30, LA="", PY=2020, DB="Scopus")])
-    kept, steps = bio.apply_filters(df, languages=["English"])
-    assert sorted(kept["TI"]) == ["a", "c"]
-    assert dict(steps)["Non-eligible language"] == 1
-    assert "Other languages" not in dict(steps)
-    kept2, steps2 = bio.apply_filters(df, languages=["English"], keep_unknown_language=False)
-    assert list(kept2["TI"]) == ["a"]
-    assert dict(steps2)["Unknown language (excluded)"] == 1
+    dfb, dfm, steps = bio.apply_filters(df, languages=["English"])
+    st = {n: (k, kind) for n, k, kind in steps}
+    assert sorted(dfm["TI"]) == ["a", "c"]
+    assert st["Non-eligible language"] == (1, "excluded")
+    assert st["Language not available"] == (1, "kept")
+    _, dfm2, steps2 = bio.apply_filters(df, languages=["English"], keep_unknown_language=False)
+    assert list(dfm2["TI"]) == ["a"]
+    assert {n: kind for n, _, kind in steps2}["Language not available"] == "excluded"
+
+
+def test_missing_abstract_and_year_kept_in_bibliometric_corpus():
+    df = frame([rec(TI="a", AB="w " * 30, PY=2020), rec(TI="b", AB="", PY=2020), rec(TI="c", AB="w " * 5, PY=2021),
+                rec(TI="d", AB="w " * 30, PY=pd.NA)])
+    dfb, dfm, steps = bio.apply_filters(df, year_min=2000, year_max=2025)
+    assert sorted(dfb["TI"]) == ["a", "b", "c", "d"]  # nada se pierde en la bibliometría
+    assert list(dfm["TI"]) == ["a"]
+    kinds = {n: kind for n, _, kind in steps}
+    assert kinds["No abstract"] == "modelling" and kinds["Year not available"] in ("kept", "modelling")
 
 
 def test_status_by_db_counts_three_states():

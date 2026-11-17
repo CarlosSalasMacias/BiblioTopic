@@ -9,6 +9,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import networkx as nx  # noqa: E402
 import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
 import matplotlib.patheffects as pe  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch  # noqa: E402
@@ -109,15 +110,19 @@ def wrap(s, w=28):
 
 
 # ------------------------------------------------------------ PRISMA
-def prisma(path, by_db, total, dups, unique, steps, final):
-    fig, ax = plt.subplots(figsize=(7, 5.2))
+def prisma(path, by_db, total, dups, unique, steps, final, final_biblio=None):
+    """Diagrama de flujo (PRISMA 2020 adaptado). steps: [(motivo, n, tipo)] con tipo «excluded», «kept»
+    (sin dato, conservado: se muestra aparte) o «modelling» (fuera solo del corpus de modelado)."""
+    steps = [s if len(s) == 3 else (s[0], s[1], "excluded") for s in steps]  # proyectos antiguos
+    final_biblio = final if final_biblio is None else final_biblio
+    fig, ax = plt.subplots(figsize=(7.2, 7.0))
     ax.set_xlim(-0.5, 10)
-    ax.set_ylim(2.9, 9.8)
+    ax.set_ylim(0.2, 9.8)
     ax.axis("off")
 
     def box(x, y, w, h, text, fc="#eef4f8"):
         ax.add_patch(FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0.05", fc=fc, ec=BLUE, lw=1))
-        ax.text(x + w / 2, y + h / 2, text, ha="center", va="center", fontsize=8.5)
+        ax.text(x + w / 2, y + h / 2, text, ha="center", va="center", fontsize=8)
 
     def arrow(x1, y1, x2, y2):
         ax.annotate("", xy=(x2, y2), xytext=(x1, y1), arrowprops=dict(arrowstyle="->", color=GREY))
@@ -126,15 +131,24 @@ def prisma(path, by_db, total, dups, unique, steps, final):
     box(0.3, 8.2, 4.4, 1.4, f"Records identified\n{src}\nTotal: n = {total:,}")
     box(5.6, 8.2, 4.1, 1.4, f"Duplicates removed\n(DOI / title + year)\nn = {dups:,}", "#fbeee6")
     arrow(4.7, 8.9, 5.6, 8.9)
-    box(0.3, 5.7, 4.4, 1.3, f"Unique records screened\nn = {unique:,}")
-    arrow(2.5, 8.2, 2.5, 7.0)
-    excl = "\n".join(wrap(f"{name}: n = {n:,}", 34) for name, n in steps if n) or "None"
-    box(5.6, 5.4, 4.1, 1.9, f"Records excluded\n{excl}", "#fbeee6")
-    arrow(4.7, 6.35, 5.6, 6.35)
-    box(0.3, 3.2, 4.4, 1.3, f"Records included in the\nbibliometric and topic analyses\nn = {final:,}",
-        "#e8f3ec")
-    arrow(2.5, 5.7, 2.5, 4.5)
-    for y, lab in [(8.9, "Identification"), (6.35, "Screening"), (3.85, "Included")]:
+    box(0.3, 5.9, 4.4, 1.2, f"Unique records screened\nn = {unique:,}")
+    arrow(2.5, 8.2, 2.5, 7.1)
+    exc = [(nm, n) for nm, n, k in steps if k == "excluded" and n]
+    kept = [(nm, n) for nm, n, k in steps if k == "kept" and n]
+    mod = [(nm, n) for nm, n, k in steps if k == "modelling" and n]
+    txt = "\n".join(wrap(f"{nm}: n = {n:,}", 36) for nm, n in exc) or "None"
+    box(5.6, 5.7, 4.1, 1.6, f"Records excluded\n{txt}", "#fbeee6")
+    arrow(4.7, 6.5, 5.6, 6.5)
+    ktxt = ("\nincluding records with field not available\n(kept by default):\n"
+            + "\n".join(f"{nm}: n = {n:,}" for nm, n in kept)) if kept else ""
+    box(0.3, 3.2, 4.4, 1.9 if kept else 1.2, f"Bibliometric corpus\nn = {final_biblio:,}{ktxt}", "#e8f3ec")
+    arrow(2.5, 5.9, 2.5, 5.1 if kept else 4.4)
+    mtxt = "\n".join(wrap(f"{nm}: n = {n:,}", 36) for nm, n in mod) or "None"
+    box(5.6, 3.3, 4.1, 1.5, f"Not usable for topic modelling\n(kept in bibliometrics)\n{mtxt}", "#fbeee6")
+    arrow(4.7, 4.1, 5.6, 4.1)
+    box(0.3, 0.6, 4.4, 1.2, f"Topic-modelling corpus\n(LDA and BERTopic)\nn = {final:,}", "#e8f3ec")
+    arrow(2.5, 3.2, 2.5, 1.8)
+    for y, lab in [(8.9, "Identification"), (6.5, "Screening"), (2.6, "Included")]:
         ax.text(-0.25, y, lab, rotation=90, ha="center", va="center", fontsize=9, color=BLUE,
                 fontweight="bold")
     return _save(fig, path)
@@ -176,21 +190,36 @@ def country_scp_mcp(path, cp):
 
 
 def k_selection(path, t, chosen):
-    fig, axes = plt.subplots(1, 2, figsize=(8, 3.3), sharex=True)
-
-    def mm(s):
-        return (s - s.min()) / (s.max() - s.min() + 1e-12)
-    for col, mk in [("CaoJuan2009", "o"), ("Arun2010", "s")]:
-        axes[0].plot(t["K"], mm(t[col]), marker=mk, ms=4, label=col)
-    axes[0].set_title("Minimize")
-    for col, mk in [("Deveaud2014", "^"), ("NPMI", "D")]:
-        axes[1].plot(t["K"], mm(t[col]), marker=mk, ms=4, label=col)
-    axes[1].set_title("Maximize")
-    for ax in axes:
+    """Todas las curvas de selección de K: cada métrica en su escala original (media ± DE entre semillas), con
+    la dirección óptima indicada, y el promedio normalizado. Línea discontinua: K seleccionado."""
+    panels = [("CaoJuan2009", "minimize"), ("Arun2010", "minimize"), ("Deveaud2014", "maximize"),
+              ("NPMI", "maximize"), ("Stability (Greene 2014)", "maximize"), ("Score", "combined")]
+    panels = [(m, d) for m, d in panels if m in t and t[m].notna().any()]
+    ncols = 3
+    nrows = int(np.ceil(len(panels) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(7.4, 2.4 * nrows), sharex=True)
+    axes = np.atleast_1d(axes).ravel()
+    t = t.sort_values("K")
+    for ax, (m, d) in zip(axes, panels):
+        y = t[m].values
+        sd = t[m + " SD"].values if m + " SD" in t else None
+        fine = t["Stage"].eq("fine").values if "Stage" in t else np.zeros(len(t), bool)
+        ax.plot(t["K"], y, color=BLUE, lw=1)
+        ax.scatter(t["K"][~fine], y[~fine], s=14, color=BLUE, zorder=3, label="coarse")
+        if fine.any():
+            ax.scatter(t["K"][fine], y[fine], s=10, color=ORANGE, zorder=3, label="fine")
+        if sd is not None and np.isfinite(sd).any():
+            ax.fill_between(t["K"], y - np.nan_to_num(sd), y + np.nan_to_num(sd), color=BLUE, alpha=0.15, lw=0)
         ax.axvline(chosen, color=RED, ls="--", lw=1)
-        ax.set_xlabel("Number of topics (K)")
-        ax.legend(frameon=False, fontsize=7.5)
-    axes[0].set_ylabel("Normalized metric")
+        ax.set_title(f"{m} ({d})" if d != "combined" else "Mean normalized score", fontsize=8)
+        ax.tick_params(labelsize=7)
+    for ax in axes[len(panels):]:
+        ax.axis("off")
+    for ax in axes[-ncols:]:
+        ax.set_xlabel("Number of topics (K)", fontsize=8)
+    if any(t.get("Stage", pd.Series(dtype=str)).eq("fine")):
+        axes[0].legend(frameon=False, fontsize=6.5)
+    fig.tight_layout()
     return _save(fig, path)
 
 
@@ -247,9 +276,14 @@ def doc_map(path, xy, topics, labels, title):
     return _save(fig, path)
 
 
-def similarity_heatmap(path, S, matches, title):
+def similarity_heatmap(path, S, matches, title, null=None):
+    """Coseno LDA × BERTopic; recuadro blanco = pareja húngara; punto = por encima del percentil 95 nulo del par
+    (permutación); la línea discontinua en la barra de color marca el percentil 95 nulo global."""
     fig, ax = plt.subplots(figsize=(0.35 * S.shape[1] + 3, 0.32 * S.shape[0] + 1.5))
     im = ax.imshow(S.values, cmap="viridis", vmin=0, vmax=max(S.values.max(), 0.5), aspect="auto")
+    if null is not None:
+        ii, jj = np.where(S.values > null["p95_pair"])
+        ax.scatter(jj, ii, s=6, c="white", marker="o", linewidths=0, zorder=3)
     ax.set_xticks(range(S.shape[1]), S.columns, rotation=90, fontsize=7)
     ax.set_yticks(range(S.shape[0]), S.index, fontsize=7)
     for _, r in matches.iterrows():
@@ -258,7 +292,11 @@ def similarity_heatmap(path, S, matches, title):
                                        lw=1.4))
     ax.set_xlabel("BERTopic topics")
     ax.set_ylabel("LDA topics")
-    fig.colorbar(im, ax=ax, label="Cosine similarity", shrink=0.7)
+    cb = fig.colorbar(im, ax=ax, label="Cosine similarity", shrink=0.7)
+    if null is not None:
+        cb.ax.axhline(null["p95_global"], color="white", lw=1.2, ls="--")
+        cb.ax.text(1.6, null["p95_global"], "null 95th pct.", transform=cb.ax.get_yaxis_transform(),
+                   va="center", fontsize=6.5)
     return _save(fig, path)
 
 

@@ -27,7 +27,7 @@ def session(corpus_files, tmp_path_factory):
 def test_unknown_language_records_kept(session):
     S, out, _ = session
     assert out["unknown"]["LA"].get("Scopus", 0) > 0  # Scopus sin columna de idioma
-    assert "Unknown language (excluded)" not in dict(S.excl_steps)
+    assert all(kind != "excluded" for name, n, kind in S.excl_steps if name.endswith("not available"))
     assert (S.df["DB_SOURCES"] == "Scopus").sum() > 0  # los registros exclusivos de Scopus se conservan
 
 

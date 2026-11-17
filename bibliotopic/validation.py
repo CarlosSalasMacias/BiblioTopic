@@ -220,6 +220,32 @@ def krippendorff_alpha(data, level="interval"):
     return float(1 - do / de) if de > 0 else np.nan
 
 
+def fleiss_kappa(M) -> float:
+    """Kappa de Fleiss (1971) para k evaluadores que asignan cada unidad a una categoría nominal.
+    M: matriz evaluadores × unidades (np.nan = sin respuesta; se usan las unidades con ≥ 2 respuestas)."""
+    M = np.asarray(M, dtype=object)
+    cats = sorted({str(v).strip().lower() for v in M.ravel() if v is not None and str(v).strip() not in ("", "nan")})
+    if len(cats) < 2:
+        return np.nan
+    idx = {c: i for i, c in enumerate(cats)}
+    rows = []
+    for j in range(M.shape[1]):
+        vals = [str(v).strip().lower() for v in M[:, j] if v is not None and str(v).strip() not in ("", "nan")]
+        if len(vals) >= 2:
+            cnt = np.zeros(len(cats))
+            for v in vals:
+                cnt[idx[v]] += 1
+            rows.append(cnt)
+    if not rows:
+        return np.nan
+    N = np.array(rows)
+    n_i = N.sum(axis=1)
+    P_i = (np.sum(N ** 2, axis=1) - n_i) / (n_i * (n_i - 1))
+    p_j = N.sum(axis=0) / N.sum()
+    Pbar, Pe = P_i.mean(), np.sum(p_j ** 2)
+    return float((Pbar - Pe) / (1 - Pe)) if Pe < 1 else np.nan
+
+
 def analyse(files, key=None):
     from .stats import compare_topics, mean_ci
     r, wi, key = read_sheets(files, key)
@@ -233,12 +259,21 @@ def analyse(files, key=None):
     W = wi.pivot_table(index="rater", columns="code", values="choice", aggfunc="first").reindex(columns=codes)
     alphas["intrusion"] = krippendorff_alpha(W.values, "nominal")
     out["alpha"] = alphas
+    # acuerdo entre evaluadores en la palabra intrusa (nominal) con kappa de Fleiss
+    out["fleiss_kappa"] = {"intrusion": fleiss_kappa(W.values)}
+    for c in ("interpretability", "coherence"):  # calificaciones 1-5 tratadas como categorías
+        M = r.pivot_table(index="rater", columns="code", values=c, aggfunc="first").reindex(columns=codes)
+        out["fleiss_kappa"][c] = fleiss_kappa(M.values)
     wi = wi.merge(key, on="code")
     wi["correct"] = (wi["choice"].astype(str).str.strip().str.lower()
                      == wi["intruder"].astype(str).str.strip().str.lower()).astype(float)
     wi.loc[wi["choice"].isna(), "correct"] = np.nan
     per_topic = (r.merge(key, on="code").groupby(["model", "topic"])[["interpretability", "coherence"]].mean()
-                 .join(wi.groupby(["model", "topic"])["correct"].mean().rename("model_precision")))
+                 .join(wi.groupby(["model", "topic"])["correct"].mean().rename("model_precision"))
+                 .join(wi.groupby(["model", "topic"])["correct"].count().rename("intrusion_answers")))
+    out["intrusion_by_topic"] = per_topic.reset_index()[["model", "topic", "model_precision", "intrusion_answers"]] \
+        .rename(columns={"model": "Model", "topic": "Topic", "model_precision": "Intrusion precision",
+                         "intrusion_answers": "Answers"})
     out["per_topic"] = per_topic.reset_index()
     rows = []
     for model, g in per_topic.reset_index().groupby("model"):

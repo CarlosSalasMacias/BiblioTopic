@@ -1,6 +1,8 @@
 """HJ-Biplot (Galindo, 1986)."""
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pandas as pd
 
@@ -70,6 +72,59 @@ def make_periods(years: pd.Series, width=5, min_share=0.05) -> pd.Series:
                 return l
         return labels[-1]
     return y.map(lab), labels
+
+
+def _label_from_edges(y, edges):
+    labels = [f"{lo}-{hi}" if lo != hi else str(lo) for lo, hi in edges]
+
+    def lab(v):
+        for (lo, hi), l in zip(edges, labels):
+            if lo <= v <= hi:
+                return l
+        return labels[-1] if v > edges[-1][1] else labels[0]
+    return y.map(lab), labels
+
+
+def make_periods_mode(years: pd.Series, mode="width", width=5, n_periods=5, custom=""):
+    """Periodos para los análisis temporales.
+    - "width": ancho fijo (make_periods; los primeros periodos con < 5 % del corpus se fusionan).
+    - "quantile": n_periods periodos con un número similar de documentos (cortes en años completos).
+    - "custom": texto «1990-2005, 2006-2015, 2016-2025».
+    Devuelve (periodo de cada documento, etiquetas, avisos)."""
+    y = years.astype(int)
+    warns = []
+    if mode == "custom" and custom.strip():
+        edges = []
+        for part in re.split(r"[;,]", custom):
+            m = re.match(r"\s*(\d{4})\s*[-–]\s*(\d{4})\s*$", part)
+            if m:
+                edges.append((int(m.group(1)), int(m.group(2))))
+        edges.sort()
+        if not edges:
+            raise ValueError("Periodos personalizados no válidos. Use el formato «1990-2005, 2006-2015».")
+        per, labels = _label_from_edges(y, edges)
+    elif mode == "quantile":
+        yr = np.sort(y.values)
+        cuts = sorted({int(np.quantile(yr, q)) for q in np.linspace(0, 1, int(n_periods) + 1)[1:-1]})
+        edges, lo = [], int(yr.min())
+        for c in cuts:
+            if c >= lo:
+                edges.append((lo, c))
+                lo = c + 1
+        edges.append((lo, int(yr.max())))
+        edges = [e for e in edges if e[0] <= e[1]]
+        per, labels = _label_from_edges(y, edges)
+    else:
+        per, labels = make_periods(years, width)
+    # aviso: primer periodo que agrupa muchos años con pocos documentos (p. ej., 1926-2001)
+    spans = [int(l.split("-")[1]) - int(l.split("-")[0]) + 1 if "-" in l else 1 for l in labels]
+    if len(spans) > 1:
+        share = (per == labels[0]).mean()
+        if spans[0] > 2 * max(np.median(spans[1:]), 1):
+            warns.append(f"El primer periodo ({labels[0]}) abarca {spans[0]} años con el {100 * share:.1f} % de los "
+                         "documentos. Considere iniciar el análisis temporal más tarde (año mínimo), usar periodos "
+                         "con un número similar de documentos o definir periodos personalizados.")
+    return per, labels, warns
 
 
 def cluster_candidates(coords, kmax=5, min_n=4):

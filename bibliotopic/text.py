@@ -87,20 +87,60 @@ def merge_phrases(doc: list[str], phrases: set) -> list[str]:
     return out
 
 
+def synonym_patterns(synonyms: dict, stop: set) -> list:
+    """Sinónimos del usuario como secuencias de tokens: [(tupla de tokens del término, token canónico)]."""
+    pats = []
+    for term, canon in (synonyms or {}).items():
+        a = tuple(tokenize(term, set()))
+        b = tokenize(canon, set())
+        if a and b:
+            pats.append((a, "_".join(b)))
+    return sorted(pats, key=lambda x: -len(x[0]))  # primero los más largos
+
+
+def apply_synonyms(toks: list[str], pats: list) -> list[str]:
+    if not pats:
+        return toks
+    out, i = [], 0
+    while i < len(toks):
+        for a, canon in pats:
+            if tuple(toks[i:i + len(a)]) == a:
+                out.append(canon)
+                i += len(a)
+                break
+        else:
+            out.append(toks[i])
+            i += 1
+    return out
+
+
 class Corpus:
     """Contiene textos crudos (para embeddings), tokens limpios y matriz documento-término."""
 
-    def __init__(self, df, extra_stopwords=(), min_df=5, max_df=0.5, query_terms=()):
+    def __init__(self, df, extra_stopwords=(), min_df=5, max_df=0.5, query_terms=(), synonyms=None):
         self.raw = (df["TI"].fillna("") + ". " + df["AB"].fillna("")).tolist()
         stop = set(ENGLISH_STOP_WORDS) | ACADEMIC_STOPWORDS
         stop |= {w.strip().lower() for w in extra_stopwords if w.strip()}
-        # los términos de la ecuación de búsqueda aparecen en casi todos los documentos
-        stop |= {lemmatize_simple(w.strip().lower()) for w in query_terms if w.strip()}
+        # los términos de la ecuación de búsqueda aparecen en casi todos los documentos: las palabras sueltas
+        # pasan a palabras vacías y las expresiones compuestas («coffee leaf rust») se eliminan como secuencia
+        single = [w.strip().lower() for w in query_terms if w.strip() and len(w.split()) == 1]
+        multi = [w.strip().lower() for w in query_terms if len(w.split()) > 1]
+        stop |= {lemmatize_simple(w) for w in single}
         self.stopwords = stop
         toks = [tokenize(t, stop) for t in self.raw]
+        # sinónimos del usuario (los mismos que en las palabras clave): unifican también el vocabulario
+        self.synonym_pats = synonym_patterns(synonyms, stop)
+        toks = [apply_synonyms(t, self.synonym_pats) for t in toks]
+        qpats = [(tuple(tokenize(m, set())), "") for m in multi]
+        qpats = sorted([q for q in qpats if q[0]], key=lambda x: -len(x[0]))
+        if qpats:
+            toks = [[w for w in apply_synonyms(t, qpats) if w] for t in toks]
         self.phrases = detect_phrases(toks)
         self.tokens = [merge_phrases(t, self.phrases) for t in toks]
         self.clean = [" ".join(t) for t in self.tokens]
+        n = len(self.clean)
+        if n * max_df < min_df:  # corpus muy pequeños: los umbrales serían incompatibles
+            min_df, max_df = 1, 1.0
         self.vectorizer = CountVectorizer(tokenizer=str.split, lowercase=False, token_pattern=None,
                                           min_df=min_df, max_df=max_df)
         self.X = self.vectorizer.fit_transform(self.clean)

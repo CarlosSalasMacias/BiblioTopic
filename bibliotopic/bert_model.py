@@ -53,8 +53,14 @@ def ctfidf(counts, reduce_frequent_words=True):
     return np.asarray((tf @ sp.diags(idf)).todense()), idf
 
 
-def _cluster(reduced, min_cluster_size):
-    return HDBSCAN(min_cluster_size=min_cluster_size, metric="euclidean",
+def auto_min_cluster_size(n):
+    """Tamaño mínimo de grupo automático: máx(15, 0.5 % de N)."""
+    return max(15, int(round(0.005 * n)))
+
+
+def _cluster(reduced, min_cluster_size, min_samples=None):
+    # min_samples=None -> igual a min_cluster_size (valor por defecto de HDBSCAN); se registra el valor efectivo
+    return HDBSCAN(min_cluster_size=min_cluster_size, min_samples=min_samples, metric="euclidean",
                    cluster_selection_method="eom").fit_predict(reduced)
 
 
@@ -75,8 +81,8 @@ def _sort_by_size(labels):
     return np.array([m.get(l, -1) for l in labels])
 
 
-def fit_topics(X, reduced, nr_topics, min_cluster_size):
-    raw = _cluster(reduced, min_cluster_size)
+def fit_topics(X, reduced, nr_topics, min_cluster_size, min_samples=None):
+    raw = _cluster(reduced, min_cluster_size, min_samples)
     native = len(set(raw) - {-1})
     lab = _sort_by_size(_reduce(X, raw, nr_topics))
     k = int(lab.max()) + 1 if (lab >= 0).any() else 0
@@ -92,37 +98,46 @@ def assignment_similarity(X, W, idf):
     return cosine_similarity(D, W)
 
 
-def reassign_outliers(X, labels, W, idf, sim=None):
-    """Asigna cada outlier (-1) al tema con mayor similitud c-TF-IDF. Devuelve (etiquetas, similitudes)."""
+def reassign_outliers(X, labels, W, idf, sim=None, threshold=0.0):
+    """Reducción de outliers por c-TF-IDF (como reduce_outliers(strategy="c-tf-idf") de BERTopic): cada outlier
+    (-1) se asigna al tema más similar si la similitud es ≥ threshold; si no, sigue sin asignar (-1).
+    Devuelve (etiquetas, similitudes)."""
     out = np.where(labels < 0)[0]
     if sim is None:
         sim = assignment_similarity(X, W, idf)
     new = labels.copy()
-    if len(out):
-        new[out] = sim[out].argmax(axis=1)
+    if len(out) and sim.shape[1]:
+        best = sim[out].argmax(axis=1)
+        ok = sim[out, best] >= threshold
+        new[out[ok]] = best[ok]
     return new, sim
 
 
 class BERTResult:
     def __init__(self, corpus: Corpus, reduced_list, xy, emb_name, nr_topics=None,
-                 min_cluster_size=None):
+                 min_cluster_size=None, min_samples=None, outlier_threshold=0.0, umap_seeds=None):
         """reduced_list: lista de matrices UMAP (n x 5), la primera es la principal y el resto
         (otras semillas) se usan para la estabilidad."""
         X = corpus.X.tocsr()
         n = corpus.n_docs
         self.emb_name = emb_name
-        self.min_cluster_size = min_cluster_size or max(10, int(round(n * 0.005)))
+        self.min_cluster_size = int(min_cluster_size or auto_min_cluster_size(n))
+        self.min_samples = int(min_samples) if min_samples else self.min_cluster_size
+        self.outlier_threshold = float(outlier_threshold or 0.0)
+        self.umap_seeds = list(umap_seeds or [])
         self.topics_raw, self.native_topics, self.ctfidf, idf = fit_topics(
-            X, reduced_list[0], nr_topics, self.min_cluster_size)
+            X, reduced_list[0], nr_topics, self.min_cluster_size, self.min_samples)
         self.k = self.ctfidf.shape[0]
         self.outlier_rate = float((self.topics_raw == -1).mean())
-        self.topics, sim = reassign_outliers(X, self.topics_raw, self.ctfidf, idf)
+        self.topics, sim = reassign_outliers(X, self.topics_raw, self.ctfidf, idf, threshold=self.outlier_threshold)
+        self.outlier_rate_after = float((self.topics == -1).mean())
         # trazabilidad de la asignación de cada documento: original (agrupamiento), final, similitud y motivo
         n_ = len(self.topics)
-        self.assign_sim = sim[np.arange(n_), self.topics] if self.k else np.zeros(n_)
+        best = sim.argmax(axis=1) if self.k else np.zeros(n_, int)
+        self.assign_sim = sim[np.arange(n_), np.where(self.topics >= 0, self.topics, best)] if self.k else np.zeros(n_)
         srt = np.sort(sim, axis=1) if self.k > 1 else np.zeros((n_, 2))
         self.assign_margin = srt[:, -1] - srt[:, -2] if self.k > 1 else np.zeros(n_)
-        self.reassigned = self.topics_raw < 0
+        self.reassigned = (self.topics_raw < 0) & (self.topics >= 0)
         clustered = self.assign_sim[~self.reassigned]
         # baja confianza: outlier reasignado con similitud inferior al percentil 25 de la de los documentos
         # agrupados con su propio tema
@@ -135,7 +150,8 @@ class BERTResult:
         self.umass = corpus.umass(self.top10)
         self.diversity = topic_diversity(self.top25)
         self.theta = np.zeros((n, self.k))
-        self.theta[np.arange(n), self.topics] = 1.0
+        ok_ = self.topics >= 0  # con umbral > 0 puede quedar algún documento sin asignar
+        self.theta[np.arange(n)[ok_], self.topics[ok_]] = 1.0
         self.prevalence = self.theta.mean(axis=0)
         self.sizes = np.bincount(self.topics_raw[self.topics_raw >= 0], minlength=self.k)
         self.ids = [f"B{i + 1}" for i in range(self.k)]
@@ -145,24 +161,31 @@ class BERTResult:
         if self.n_stab:
             sims = []
             for red in reduced_list[1:]:
-                _, _, W2, _ = fit_topics(X, red, nr_topics or self.k, self.min_cluster_size)
-                r, c, S = match_topics(self.ctfidf, W2)
+                _, _, W2, _ = fit_topics(X, red, nr_topics or self.k, self.min_cluster_size, self.min_samples)
                 v = np.zeros(self.k)
-                v[r] = S[r, c]
+                if W2.shape[0]:
+                    r, c, S = match_topics(self.ctfidf, W2)
+                    v[r] = S[r, c]
                 sims.append(v)
-            self.stab = np.mean(sims, axis=0)
+            self.stab_reps = np.array(sims)
+            self.stab = self.stab_reps.mean(axis=0)
+            self.stab_sd = self.stab_reps.std(axis=0, ddof=1) if self.n_stab > 1 else np.full(self.k, np.nan)
         else:
+            self.stab_reps = None
             self.stab = np.full(self.k, np.nan)
+            self.stab_sd = np.full(self.k, np.nan)
 
     def topic_table(self):
         return pd.DataFrame({
             "Topic": self.ids,
             "Label": self.labels,
             "Top terms": [", ".join(w) for w in self.top10],
-            "Prevalence (%)": (100 * self.prevalence).round(2),
-            "Prevalence, clustered documents only (%)": (100 * self.sizes / max(1, self.sizes.sum())).round(2),
+            "Prevalence (%)": (100 * self.prevalence).round(1),
+            "Prevalence, clustered documents only (%)": (100 * self.sizes / max(1, self.sizes.sum())).round(1),
             "Documents (before outlier reassignment)": self.sizes,
-            "Outliers reassigned": np.bincount(self.topics[self.topics_raw < 0], minlength=self.k),
+            "Outliers reassigned": np.bincount(self.topics[(self.topics_raw < 0) & (self.topics >= 0)],
+                                               minlength=self.k),
             "NPMI": np.round(self.npmi, 3),
-            "Stability": np.round(self.stab, 3),
+            "Stability (mean)": np.round(self.stab, 3),
+            "Stability (SD)": np.round(getattr(self, "stab_sd", np.full(self.k, np.nan)), 3),
         })

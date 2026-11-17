@@ -82,12 +82,16 @@ def corresponding_country(rp: str) -> str | None:
 
 
 def add_country_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Países de todas las afiliaciones y país del autor de correspondencia, con su origen: dirección de
+    correspondencia (RP de WoS o «Correspondence Address» de Scopus) o, en su defecto, la afiliación del primer
+    autor (primera dirección de C1)."""
     d = df.copy()
     d["COUNTRIES"] = d["C1"].map(lambda s: sorted(set(countries_in(s))))
-    d["RP_COUNTRY"] = d["RP"].map(corresponding_country)
-    # si no hay autor de correspondencia, se usa el país de la primera dirección
+    rp = d["RP"].map(corresponding_country)
     first = d["C1"].map(lambda s: (countries_in(s) or [None])[0])
-    d["RP_COUNTRY"] = d["RP_COUNTRY"].fillna(first)
+    d["RP_COUNTRY"] = rp.fillna(first)
+    d["RP_COUNTRY_SOURCE"] = np.where(rp.notna(), "Corresponding address",
+                                      np.where(first.notna(), "First author affiliation", "Not available"))
     return d
 
 
@@ -227,31 +231,103 @@ def country_collaboration(df: pd.DataFrame) -> pd.DataFrame:
                         columns=["From", "To", "Weight"]).sort_values("Weight", ascending=False)
 
 
+# variantes británicas -> estadounidenses (lista cerrada para no tocar palabras como «rise» o «precise»)
+_UK_US_WORDS = {"colour": "color", "behaviour": "behavior", "flavour": "flavor", "favour": "favor",
+                "labour": "labor", "odour": "odor", "vapour": "vapor", "humour": "humor", "tumour": "tumor",
+                "neighbour": "neighbor", "harbour": "harbor", "centre": "center", "fibre": "fiber",
+                "litre": "liter", "metre": "meter", "programme": "program", "sulphur": "sulfur",
+                "aluminium": "aluminum", "grey": "gray", "analyse": "analyze", "catalyse": "catalyze",
+                "paralyse": "paralyze", "ageing": "aging", "modelling": "modeling", "modelled": "modeled",
+                "travelling": "traveling", "labelling": "labeling", "fertiliser": "fertilizer",
+                "defence": "defense", "licence": "license", "haemoglobin": "hemoglobin", "oestrogen": "estrogen"}
+
+
+def _uk_to_us(word: str) -> str:
+    w = _UK_US_WORDS.get(word)
+    if w:
+        return w
+    for uk, us in (("isations", "izations"), ("isation", "ization"), ("ised", "ized"), ("ising", "izing"),
+                   ("iser", "izer"), ("isers", "izers")):
+        if word.endswith(uk) and len(word) > len(uk) + 3:
+            return word[: -len(uk)] + us
+    return word
+
+
 def norm_keyword(k: str, synonyms=None) -> str:
-    """Minúsculas, sin puntuación final ni abreviaturas de autoridad botánica ('coffea arabica l.')."""
-    k = re.sub(r"\s+", " ", k.lower()).strip(" .;,")
+    """Minúsculas, sin puntuación final ni abreviaturas de autoridad botánica ('coffea arabica l.'), guiones
+    tipográficos unificados, variante estadounidense y última palabra en singular ('coffee plantations')."""
+    from .text import lemmatize_simple
+    k = re.sub(r"\s+", " ", str(k).lower()).strip(" .;,")
     k = re.sub(r"(\s+[a-z]\.?)+$", "", k) if len(k.split()) > 1 else k
-    k = k.replace("‐", "-").strip()
+    k = re.sub(r"[‐‑‒–—]", "-", k).replace(" - ", "-").strip()
+    words = [_uk_to_us(w) for w in k.split(" ")]
+    if words and words[-1] and not re.search(r"\d", words[-1]):
+        words[-1] = lemmatize_simple(words[-1])
+    k = " ".join(words)
     return (synonyms or {}).get(k, k)
 
 
 def parse_synonyms(text: str) -> dict:
-    """'arabica coffee = coffea arabica; robusta = coffea canephora' -> dict."""
+    """Admite el formato CSV «término,forma_canónica» (una línea por par; se ignora una cabecera) y el antiguo
+    «a, b = canónica; c = canónica»."""
     out = {}
-    for part in re.split(r"[;\n]", text or ""):
-        if "=" in part:
-            a, b = part.split("=", 1)
+    for line in re.split(r"[\n;]", text or ""):
+        line = line.strip().strip("\ufeff")
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            a, b = line.split("=", 1)
             for x in a.split(","):
                 if x.strip():
                     out[norm_keyword(x)] = norm_keyword(b)
+        elif "," in line:
+            a, b = [x.strip().strip('"') for x in line.split(",", 1)]
+            if a.lower() in ("term", "término", "termino") and b.lower().startswith(("canonical", "forma")):
+                continue  # cabecera
+            if a and b:
+                out[norm_keyword(a)] = norm_keyword(b)
     return out
 
 
-def normalize_keywords(df: pd.DataFrame, synonyms=None) -> pd.DataFrame:
+def normalize_keywords(df: pd.DataFrame, synonyms=None, return_map=False):
+    """Normaliza DE e ID: norm_keyword, unificación de variantes con guion/espacio/sin separación (se conserva
+    la forma más frecuente) y sinónimos del usuario. Con return_map=True devuelve también la tabla de cambios."""
     d = df.copy()
+    raw = Counter()
     for f in ("DE", "ID"):
-        d[f] = d[f].map(lambda s: "; ".join(dict.fromkeys(
-            k for k in (norm_keyword(x, synonyms) for x in split_list(s)) if k)))
+        for s_ in d[f]:
+            raw.update(norm_keyword(x) for x in split_list(s_))
+    # variantes «agro-forestry», «agro forestry», «agroforestry» -> la más frecuente
+    groups = {}
+    for k, n in raw.items():
+        groups.setdefault(re.sub(r"[\s\-]", "", k), []).append((n, k))
+    canon = {}
+    for members in groups.values():
+        best = max(members)[1]
+        for _, k in members:
+            canon[k] = best
+    syn = synonyms or {}
+
+    def fix(x):
+        k = canon.get(norm_keyword(x), norm_keyword(x))
+        return syn.get(k, k)
+    changes = Counter()
+    for f in ("DE", "ID"):
+        new = []
+        for s_ in d[f]:
+            ks = []
+            for x in split_list(s_):
+                k = fix(x)
+                if k:
+                    ks.append(k)
+                    if k != x.strip().lower():
+                        changes[(x.strip().lower(), k)] += 1
+            new.append("; ".join(dict.fromkeys(ks)))
+        d[f] = new
+    if return_map:
+        m = pd.DataFrame([(a, b, n) for (a, b), n in changes.most_common()],
+                         columns=["Original keyword", "Normalized keyword", "Occurrences"])
+        return d, m
     return d
 
 

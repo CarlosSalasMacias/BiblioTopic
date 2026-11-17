@@ -44,6 +44,12 @@ REFS = {
     "ward": "Ward, J. H. (1963). Hierarchical grouping to optimize an objective function. Journal of the American Statistical Association, 58(301), 236–244. https://doi.org/10.1080/01621459.1963.10500845",
     "rousseeuw": "Rousseeuw, P. J. (1987). Silhouettes: A graphical aid to the interpretation and validation of cluster analysis. Journal of Computational and Applied Mathematics, 20, 53–65. https://doi.org/10.1016/0377-0427(87)90125-7",
     "bh": "Benjamini, Y., & Hochberg, Y. (1995). Controlling the false discovery rate: A practical and powerful approach to multiple testing. Journal of the Royal Statistical Society: Series B (Methodological), 57(1), 289–300. https://doi.org/10.1111/j.2517-6161.1995.tb02031.x",
+    "greene": "Greene, D., O'Callaghan, D., & Cunningham, P. (2014). How many topics? Stability analysis for topic models. In Machine Learning and Knowledge Discovery in Databases (ECML PKDD 2014) (pp. 498–513). Springer. https://doi.org/10.1007/978-3-662-44848-9_32",
+    "mann45": "Mann, H. B. (1945). Nonparametric tests against trend. Econometrica, 13(3), 245–259. https://doi.org/10.2307/1907187",
+    "sen68": "Sen, P. K. (1968). Estimates of the regression coefficient based on Kendall's tau. Journal of the American Statistical Association, 63(324), 1379–1389. https://doi.org/10.1080/01621459.1968.10480934",
+    "fleiss": "Fleiss, J. L. (1971). Measuring nominal scale agreement among many raters. Psychological Bulletin, 76(5), 378–382. https://doi.org/10.1037/h0031619",
+    "kessler": "Kessler, M. M. (1963). Bibliographic coupling between scientific papers. American Documentation, 14(1), 10–25. https://doi.org/10.1002/asi.5090140103",
+    "efron87": "Efron, B. (1987). Better bootstrap confidence intervals. Journal of the American Statistical Association, 82(397), 171–185. https://doi.org/10.1080/01621459.1987.10478410",
     "efron": "Efron, B., & Tibshirani, R. J. (1993). An introduction to the bootstrap. Chapman & Hall/CRC.",
     "mann": "Mann, H. B., & Whitney, D. R. (1947). On a test of whether one of two random variables is stochastically larger than the other. The Annals of Mathematical Statistics, 18(1), 50–60.",
     "chang": "Chang, J., Boyd-Graber, J., Gerrish, S., Wang, C., & Blei, D. M. (2009). Reading tea leaves: How humans interpret topic models. Advances in Neural Information Processing Systems, 22, 288–296.",
@@ -54,6 +60,13 @@ REFS = {
     "montazeri": "Montazeri, A., Mohammadi, S., Hesari, P. M., Ghaemi, M., Riazi, H., & Sheikhi-Mobarakeh, Z. (2023). Preliminary guideline for reporting bibliometric reviews of the biomedical literature (BIBLIO): A minimum requirements. Systematic Reviews, 12, 239. https://doi.org/10.1186/s13643-023-02410-2",
     "strehl": "Strehl, A., & Ghosh, J. (2002). Cluster ensembles: A knowledge reuse framework for combining multiple partitions. Journal of Machine Learning Research, 3, 583–617.",
 }
+
+
+def fp(p):
+    """«= 0.027» o «< 0.001»: mismo formato de p en el texto y en las tablas (stats.fmt_p)."""
+    from .stats import fmt_p
+    t = fmt_p(p)
+    return t if t.startswith("<") or t == "n.a." else "= " + t
 
 
 def f(x, d=2):
@@ -259,7 +272,8 @@ CITE_NAMES = {
     "page": "Page et al., 2021", "pedregosa": "Pedregosa et al., 2011",
     "reimers": "Reimers y Gurevych, 2019", "strehl": "Strehl y Ghosh, 2002",
     "vaneck": "van Eck y Waltman, 2009", "ward": "Ward, 1963", "rousseeuw": "Rousseeuw, 1987",
-    "efron": "Efron y Tibshirani, 1993", "bh": "Benjamini y Hochberg, 1995", "mann": "Mann y Whitney, 1947", "chang": "Chang et al., 2009",
+    "efron": "Efron y Tibshirani, 1993", "greene": "Greene et al., 2014", "mann45": "Mann, 1945",
+    "sen68": "Sen, 1968", "fleiss": "Fleiss, 1971", "kessler": "Kessler, 1963", "efron87": "Efron, 1987", "bh": "Benjamini y Hochberg, 1995", "mann": "Mann y Whitney, 1947", "chang": "Chang et al., 2009",
     "hayes": "Hayes y Krippendorff, 2007", "callon": "Callon et al., 1991", "cobo": "Cobo et al., 2011",
     "small": "Small, 1973", "montazeri": "Montazeri et al., 2023",
 }
@@ -317,6 +331,32 @@ TAB_ORDER = ["T1_main_information", "T2_top_sources", "T4_countries", "T10_most_
              "T11_thematic_map", "T6_LDA_topics", "T7_BERTopic_topics", "T8_model_metrics", "T8b_inference",
              "T9_topic_alignment", "T12_expert_validation"]
 
+
+
+def _country_text(R):
+    """País del autor de correspondencia: origen del dato y porcentaje sin país."""
+    d = R.dfb if getattr(R, "dfb", None) is not None else R.df
+    if not R.has_countries or "RP_COUNTRY_SOURCE" not in d:
+        return ""
+    src = d["RP_COUNTRY_SOURCE"].value_counts()
+    n = len(d)
+    fa = int(src.get("First author affiliation", 0))
+    na = int(src.get("Not available", 0))
+    return ("El país de cada documento se asignó según la dirección del autor de correspondencia"
+            + (f" o, cuando esta no estaba disponible, según la afiliación del primer autor ({f(100 * fa / n, 1)} % de "
+               "los documentos)" if fa else "")
+            + f"; el {f(100 * na / n, 1)} % de los documentos no pudo asignarse a ningún país. ")
+
+
+def _keyword_text(R, cfg):
+    km = getattr(R, "keyword_map", None)
+    syn = getattr(R, "synonyms_used", None) or {}
+    if km is None:
+        return ""
+    return ("Las palabras clave se normalizaron automáticamente (minúsculas, singular, variantes con guion o espacio "
+            "y ortografía británica/estadounidense unificadas)"
+            + (f" y se unificaron {pl(len(syn), 'sinónimo definido', 'sinónimos definidos')} por los autores" if syn else "")
+            + ("; la tabla de equivalencias se proporciona como material suplementario." if len(km) else "."))
 
 
 def _trend_text(labels, tr):
@@ -402,22 +442,38 @@ def build(R, path, meta, sections=None):
         s = num()
         W.h("2. Materiales y métodos", 1)
         W.h(f"2.{next(s)}. Fuente de datos y estrategia de búsqueda", 2)
-        q = meta.get("query") or "[ecuación de búsqueda]"
-        date = meta.get("search_date") or "[fecha]"
-        W.p(f"La información se obtuvo de {dbs_txt}, bases de datos de referencia para estudios "
-            "bibliométricos por su cobertura multidisciplinar y la calidad de sus metadatos. La búsqueda se "
-            "realizó el ", (date, "hl"), " mediante la siguiente ecuación booleana aplicada a título, resumen "
-            "y palabras clave: ", (q, "hl"), ". Los registros se exportaron con todos sus campos disponibles ("
-            + "; ".join(f"{k}: {f(v, 0)} registros" for k, v in by_db.items()) + ").")
+        date = cfg.get("search_date") or meta.get("search_date") or "[fecha de la búsqueda]"
+        eqs = [(db, cfg.get(k_)) for db, k_ in (("Scopus", "search_scopus"), ("Web of Science", "search_wos"))
+               if db.split()[0] in " ".join(by_db) or db == "Web of Science" and "WoS" in by_db]
+        parts = [f"La información se obtuvo de {dbs_txt}, bases de datos de referencia para estudios "
+                 "bibliométricos por su cobertura multidisciplinar y la calidad de sus metadatos. La búsqueda se "
+                 "realizó el ", (date, "hl"), " con las siguientes ecuaciones: "]
+        for i_, (db, eq) in enumerate(eqs):
+            parts += [f"{db}: ", (eq or f"[ecuación de búsqueda en {db}]", "hl" if not eq else None),
+                      "; " if i_ < len(eqs) - 1 else ". "]
+        if cfg.get("wos_indexes") and "WoS" in by_db:
+            parts.append(f"En Web of Science se consultaron los índices {enum_es(cfg['wos_indexes'])} de la "
+                         "Colección Principal. ")
+        elif "WoS" in by_db:
+            parts += [("[índices de WoS consultados: SCI-EXPANDED, SSCI…]", "hl"), ". "]
+        parts.append("Los registros se exportaron con todos sus campos disponibles ("
+                     + "; ".join(f"{k}: {f(v, 0)} registros" for k, v in by_db.items()) + ")"
+                     + ("; la disponibilidad de cada campo por base se informa en el material suplementario"
+                        if getattr(R, "audit", None) else "") + ".")
+        W.p(*[x if not isinstance(x, tuple) or x[1] else x[0] for x in parts])
 
         W.h(f"2.{next(s)}. Depuración y fusión del corpus", 2)
         es = {"Non-eligible document type": "registros de otros tipos de documento",
               "Non-eligible language": "registros en otros idiomas",
-              "Unknown document type (excluded)": "registros sin tipo de documento informado",
-              "Unknown language (excluded)": "registros sin idioma informado",
-              "Missing/short abstract (<20 words)": "registros sin resumen o con menos de 20 palabras"}
-        excl_txt = enum_es([f"{es.get(name, 'registros fuera del periodo ' + name.split()[-1])} "
-                            f"(n = {f(k, 0)})" for name, k in R.excl_steps if k])
+              "Document type not available": "registros sin tipo de documento informado",
+              "Language not available": "registros sin idioma informado",
+              "Year not available": "registros sin año de publicación"}
+        steps3 = [st if len(st) == 3 else (st[0], st[1], "excluded") for st in R.excl_steps]
+        excl_txt = enum_es([f"{es.get(name, 'registros fuera del periodo ' + name.split()[-1])} (n = {f(k, 0)})"
+                            for name, k, kind in steps3 if k and kind == "excluded"])
+        mod_txt = enum_es([f"{ {'No abstract': 'sin resumen', 'Year not available': 'sin año de publicación'}.get(name, 'con un resumen de menos de 20 palabras')} (n = {f(k, 0)})"
+                           for name, k, kind in steps3 if k and kind == "modelling"])
+        dfb_ = R.dfb if getattr(R, "dfb", None) is not None else df
         filt = []
         if cfg.get("doc_types") and R.availability["DT"] > 0:
             filt.append("tipos de documento " + enum_es(cfg["doc_types"]))
@@ -449,11 +505,23 @@ def build(R, path, meta, sections=None):
             + (f", y los {f(ms['groups_with_conflicts'], 0)} grupos con datos discrepantes (DOI, año o idioma) "
                "se marcaron para su revisión" if ms.get("groups_with_conflicts") else "")
             + f". Se eliminaron {f(ms['duplicates_removed'], 0)} duplicados, quedando {f(ms['unique'], 0)} "
-            "registros únicos. Como criterios de elegibilidad se exigió "
-            + (enum_es(filt) + " y " if filt else "")
-            + f"un resumen de al menos 20 palabras. Se excluyeron {excl_txt or 'ningún registro'}, de modo que "
-            f"el corpus final quedó integrado por {f(n, 0)} documentos publicados entre {py.min()} y {py.max()}. "
-            + ("".join(f"{t[0].upper()}{t[1:]}. " for t in unk_txt))
+            "registros únicos. "
+            + ("Como criterios de elegibilidad se exigió " + enum_es(filt) + ". " if filt
+               else "No se aplicaron criterios de tipo de documento ni de idioma. ")
+            + (f"Se excluyeron {excl_txt}. " if excl_txt else "No se excluyó ningún registro por los criterios de elegibilidad. ")
+            + ("Ningún registro se excluyó por la ausencia de un campo en la exportación"
+               if all(cfg.get(k_, True) for k_ in ("keep_unknown_language", "keep_unknown_type", "keep_unknown_year"))
+               else "Los registros sin dato en los campos usados como criterio se trataron como se indica a continuación")
+            + (": " + "; ".join(unk_txt) + "; " if unk_txt else "; ")
+            + ("Scopus indexa resúmenes en inglés de documentos publicados en otros idiomas; el criterio de idioma se "
+               "aplicó al idioma del documento y se conservaron los registros con al menos uno de los idiomas "
+               "admitidos; " if cfg.get("languages") and "Scopus" in by_db else "")
+            + f"el corpus bibliométrico quedó integrado por {f(len(dfb_), 0)} documentos. Para el modelado de temas "
+            "se requirió además un resumen de al menos 20 palabras y el año de publicación"
+            + (f"; no cumplieron este requisito los registros {mod_txt}, que se mantuvieron en los análisis "
+               "bibliométricos" if mod_txt else "")
+            + f", por lo que el corpus de modelado quedó integrado por {f(n, 0)} documentos publicados entre "
+            f"{py.min()} y {py.max()}. "
             + f"El proceso se resume en un diagrama de flujo adaptado de PRISMA 2020 {cite('page')}{ref('prisma')}.")
 
         if R.on("biblio") or R.has_countries or X.get("kw_field"):
@@ -474,7 +542,14 @@ def build(R, path, meta, sections=None):
                 "coautores por documento, fuentes más relevantes, zonas de Bradford " + cite("bradford")
                 + " y distribución de la productividad de autores según la ley de Lotka " + cite("lotka")
                 + (". Además, se analizaron " + enum_es(extra) if extra else "")
-                + ". Los indicadores se implementaron en Python siguiendo las definiciones de bibliometrix.")
+                + ". Los indicadores se implementaron en Python siguiendo las definiciones de bibliometrix"
+                + (f". La tasa de crecimiento anual se calculó hasta el último año completo"
+                   if cfg.get("exclude_incomplete_year", True) else "")
+                + ("; para los documentos presentes en ambas bases se usó el mayor número de citas de las dos"
+                   if cfg.get("citation_source", "max") == "max" and len(by_db) > 1 else
+                   (f"; las citas se tomaron de {cfg.get('citation_source')}" if len(by_db) > 1 else ""))
+                + ". " + _country_text(R)
+                + _keyword_text(R, cfg))
 
         if lda is not None or bert is not None:
             W.h(f"2.{next(s)}. Preprocesamiento del texto", 2)
@@ -494,29 +569,52 @@ def build(R, path, meta, sections=None):
                 f"{int(100 * cfg['max_df'])} % de ellos, con un vocabulario final de "
                 f"{f(len(R.corpus.vocab), 0)} términos"
                 + (". El mismo vocabulario se utilizó en ambos modelos para que la comparación fuera directa."
-                   if lda is not None and bert is not None else "."))
+                   if lda is not None and bert is not None else ".")
+                + (f" Los {pl(len(R.synonyms_used), 'sinónimo definido', 'sinónimos definidos')} por los autores "
+                   "se aplicaron también al vocabulario de los modelos." if getattr(R, "synonyms_used", None) else ""))
 
         if lda is not None:
             W.h(f"2.{next(s)}. Modelado de temas con LDA", 2)
             ksel_txt = ""
+            lp = getattr(lda, "params", None) or {"learning_method": "online", "max_iter": 20,
+                                                  "doc_topic_prior": 1 / lda.k, "topic_word_prior": 1 / lda.k}
             if R.ksel is not None:
                 ks = R.ksel["K"]
-                ksel_txt = (f"El número de temas (K) se evaluó entre {ks.min()} y {ks.max()} (paso "
-                            f"{cfg['k_step']}) con cuatro métricas complementarias: CaoJuan2009 {cite('cao')} y "
-                            f"Arun2010 {cite('arun')}, a minimizar, y Deveaud2014 {cite('deveaud')} y la "
-                            "coherencia NPMI de las diez palabras principales de cada tema "
-                            f"{cite('bouma')}, a maximizar. Las métricas se normalizaron entre 0 y 1 y se "
-                            "seleccionó el K con el mayor promedio. ")
+                fine = "Stage" in R.ksel and R.ksel["Stage"].eq("fine").any()
+                n_seeds = int(R.ksel["Seeds"].max()) if "Seeds" in R.ksel else 1
+                greene = "Stability (Greene 2014)" in R.ksel and R.ksel["Stability (Greene 2014)"].notna().any()
+                ksel_txt = (f"El número de temas (K) se seleccionó en "
+                            + (f"dos etapas: una búsqueda gruesa entre {cfg['k_min']} y {cfg['k_max']} (paso "
+                               f"{cfg['k_step']}) y una búsqueda fina con paso 1 en ±{cfg['k_fine_window']} alrededor "
+                               "del mejor K de la primera etapa" if fine else
+                               f"una búsqueda entre {ks.min()} y {ks.max()} (paso {cfg['k_step']})")
+                            + f" ({len(ks)} valores de K evaluados). Para cada K se ajustaron "
+                            + (f"{n_seeds} modelos con semillas distintas y se promediaron " if n_seeds > 1 else
+                               "un modelo y se calcularon ")
+                            + f"{'cinco' if greene else 'cuatro'} métricas: CaoJuan2009 {cite('cao')} y Arun2010 "
+                            f"{cite('arun')}, a minimizar, y Deveaud2014 {cite('deveaud')}, la coherencia NPMI de las "
+                            f"diez palabras principales de cada tema {cite('bouma')}"
+                            + (f" y la estabilidad entre semillas (acuerdo medio de las listas de términos "
+                               f"principales de los temas emparejados) {cite('greene')}" if greene else "")
+                            + ", a maximizar. Las métricas se normalizaron entre 0 y 1 sobre todos los K evaluados y "
+                            f"se seleccionó el K con el mayor promedio (K = {lda.k}); todas las curvas se muestran en "
+                            "el material suplementario. ")
             else:
                 ksel_txt = f"El número de temas se fijó en K = {lda.k}. "
+            method_txt = (f"inferencia variacional por lotes (batch) con un máximo de {lp['max_iter']} iteraciones y "
+                          f"criterio de convergencia sobre la perplejidad (el modelo final convergió en "
+                          f"{getattr(lda, 'n_iter', lp['max_iter'])} iteraciones)"
+                          if lp["learning_method"] == "batch" else
+                          f"inferencia variacional en línea {cite('hoffman')} ({lp['max_iter']} iteraciones)")
             W.p(f"La asignación latente de Dirichlet (LDA) {cite('blei')} representa cada documento como una "
                 "mezcla de temas y cada tema como una distribución de probabilidad sobre el vocabulario. El "
-                f"modelo se estimó por inferencia variacional en línea {cite('hoffman')} con scikit-learn "
-                f"{cite('pedregosa')}. " + ksel_txt
-                + (f"Para evaluar la estabilidad, el modelo final se reestimó con {cfg['n_stab_lda']} semillas "
-                   "aleatorias distintas; cada tema se emparejó con su homólogo mediante el algoritmo húngaro "
-                   f"{cite('kuhn')} y se calculó la similitud coseno media entre réplicas como índice de "
-                   "estabilidad." if stab_on else ""))
+                f"modelo se estimó con scikit-learn {cite('pedregosa')} mediante {method_txt}, con priors de "
+                f"Dirichlet α = {lp['doc_topic_prior']:.3g} (documento-tema) y η = {lp['topic_word_prior']:.3g} "
+                f"(tema-palabra) y semilla {cfg['seed']}. " + ksel_txt
+                + (f"Para evaluar la estabilidad, el modelo final se reestimó con {len(lda.stab_seeds) if getattr(lda, 'stab_seeds', None) else cfg['n_stab_lda']} "
+                   "semillas aleatorias distintas; cada tema se emparejó con su homólogo mediante el algoritmo húngaro "
+                   f"{cite('kuhn')} y se calculó la similitud coseno con su par en cada réplica; se informa la media "
+                   "± desviación estándar por tema y global." if stab_on else ""))
 
         if bert is not None:
             W.h(f"2.{next(s)}. Modelado de temas con BERTopic", 2)
@@ -524,19 +622,27 @@ def build(R, path, meta, sections=None):
             emb_txt = ("una representación semántica latente (TF-IDF + SVD) [REEMPLAZAR si se usó un modelo de "
                        "lenguaje]" if lsa else
                        f"el modelo de lenguaje preentrenado {R.emb_name} {cite('reimers')}")
+            us = R.umap_settings() if hasattr(R, "umap_settings") else {"metric": "euclidean", "n_neighbors": 15,
+                                                                         "n_components": 5, "min_dist": 0.0}
+            thr = getattr(bert, "outlier_threshold", 0.0)
             W.p(f"BERTopic {cite('grootendorst')} agrupa documentos semánticamente similares a partir de "
                 f"representaciones vectoriales densas. Los títulos y resúmenes se codificaron con {emb_txt}; "
-                f"la dimensionalidad se redujo a cinco componentes con UMAP {cite('mcinnes18')} (15 vecinos) y "
-                f"los documentos se agruparon con HDBSCAN {cite('campello')} (tamaño mínimo de grupo = "
-                f"{bert.min_cluster_size}). Cada tema se describió mediante TF-IDF basado en clases "
+                f"la dimensionalidad se redujo a {us['n_components']} componentes con UMAP {cite('mcinnes18')} "
+                f"({us['n_neighbors']} vecinos, distancia mínima {us['min_dist']}, métrica "
+                f"{'coseno' if us['metric'] == 'cosine' else 'euclídea'}) y los documentos se agruparon con HDBSCAN "
+                f"{cite('campello')} (tamaño mínimo de grupo = {bert.min_cluster_size}"
+                + (", calculado como máx(15; 0.5 % de N)" if not cfg.get("min_cluster_size") else "")
+                + f"; min_samples = {getattr(bert, 'min_samples', bert.min_cluster_size)}). Cada tema se describió mediante TF-IDF basado en clases "
                 "(c-TF-IDF) con reducción de palabras frecuentes"
                 + (", sobre el mismo vocabulario usado en LDA" if lda is not None else "") + ". "
                 + (f"HDBSCAN identificó {bert.native_topics} grupos, que se fusionaron por similitud c-TF-IDF "
                    f"(agrupamiento jerárquico con enlace promedio) hasta K = {bert.k}"
                    + (" para comparar ambos modelos con igual granularidad" if lda is not None else "") + ". "
                    if bert.native_topics != bert.k else "")
-                + "Los documentos no asignados (outliers) se reasignaron al tema con mayor similitud c-TF-IDF "
-                "para los análisis por documento; para cada documento se conservaron la asignación original, la "
+                + f"HDBSCAN dejó sin asignar al {f(100 * bert.outlier_rate, 1)} % de los documentos (outliers), que se "
+                + ("reasignaron al tema con mayor similitud c-TF-IDF" if not thr else
+                   f"reasignaron al tema con mayor similitud c-TF-IDF cuando esta fue ≥ {thr}")
+                + f" (outliers tras la reasignación: {f(100 * getattr(bert, 'outlier_rate_after', 0), 1)} %); para cada documento se conservaron la asignación original, la "
                 "final, la similitud con el tema asignado y el motivo de la decisión, y se marcaron como de baja "
                 "confianza las reasignaciones con una similitud inferior al percentil 25 de la de los documentos "
                 "agrupados. La prevalencia y las tendencias se informan también solo con los documentos asignados "
@@ -558,13 +664,20 @@ def build(R, path, meta, sections=None):
                         + (f" ({X.get('trend_years')} años, {yr[0]}–{yr[1]})" if yr else "")
                         + (f"; se excluyó {enum_es([str(y) for y in ex])} por tratarse del año en curso, con "
                            "registros incompletos" if ex else "")
-                        + ". Los valores p se ajustaron por pruebas múltiples con el procedimiento de "
-                        f"Benjamini-Hochberg {cite('bh')}; los temas con q < 0.05 se clasificaron como emergentes o "
-                        "en declive según el signo de la pendiente, y los demás como sin tendencia significativa. "
+                        + (f". Además, se aplicó la prueba no paramétrica de Mann-Kendall {cite('mann45')} con la "
+                           f"pendiente de Sen {cite('sen68')} y su intervalo de confianza del 95 %"
+                           if cfg.get("trend_test") == "mann_kendall" else "")
+                        + ". Los valores p de cada prueba se ajustaron por pruebas múltiples sobre todos los temas con "
+                        f"el procedimiento de Benjamini-Hochberg {cite('bh')}; los temas con q < {cfg.get('alpha', 0.05)} "
+                        + ("en la prueba de Mann-Kendall" if cfg.get("trend_test") == "mann_kendall" else "en la regresión")
+                        + " se clasificaron como emergentes o en declive según el signo de la pendiente, y los demás "
+                        "como sin tendencia significativa. "
                         "Cuando menos de tres años alcanzaron el mínimo de documentos, la tendencia se consideró no "
                         "estimable. ")
             if R.on("hjbiplot"):
-                txt += (f"Para analizar conjuntamente temas y tiempo se agruparon los años en periodos "
+                pmode = {"quantile": "con un número similar de documentos", "custom": "definidos por los autores"}.get(
+                    X.get("period_mode"), f"de {X.get('period_width')} años")
+                txt += (f"Para analizar conjuntamente temas y tiempo se agruparon los años en periodos {pmode} "
                         f"({enum_es(X['periods'])}) y se construyó una matriz periodo × tema con la prevalencia "
                         f"media, a la que se aplicó un HJ-Biplot {cite('galindo', 'gabriel')}. Este método "
                         "representa filas y columnas en un mismo sistema de ejes con la máxima calidad de "
@@ -592,18 +705,26 @@ def build(R, path, meta, sections=None):
                 "(ii) Correspondencia entre temas: se calculó la similitud coseno entre la distribución "
                 "palabra-tema de LDA y el vector c-TF-IDF de BERTopic y se obtuvo el emparejamiento óptimo uno a "
                 f"uno con el algoritmo húngaro {cite('kuhn')}; también se informa el índice de Jaccard entre las "
-                "diez palabras principales. (iii) Coincidencia a nivel de documento: índice de Rand ajustado "
+                "diez palabras principales y, para cada tema, su mejor correspondencia en el otro modelo (muchos a "
+                "uno), lo que permite identificar pares forzados por el emparejamiento uno a uno"
+                + (f". Como línea base nula, la similitud de cada par se comparó con la distribución obtenida en "
+                   f"{f(cfg.get('n_perm'), 0)} permutaciones de los pesos del vocabulario de los temas de BERTopic "
+                   "(valor p por permutación y percentil 95 nulo)" if cfg.get("n_perm") else "")
+                + ". (iii) Coincidencia a nivel de documento: índice de Rand ajustado "
                 f"(ARI) {cite('hubert')} e información mutua normalizada (NMI) {cite('strehl')} entre el tema "
                 "dominante de LDA y el tema asignado por BERTopic, calculados por separado para todos los documentos "
                 "(con los outliers de BERTopic reasignados) y solo para los documentos asignados originalmente por "
                 "el agrupamiento. "
                 + ("Con estos elementos se propone un Índice de Robustez Temática (TRI) para cada par "
-                   "emparejado: TRI = cos(LDA, BERTopic) × √(estabilidad LDA × estabilidad BERTopic). "
+                   "emparejado: TRI = cos(LDA, BERTopic) × √(estabilidad LDA × estabilidad BERTopic), con un "
+                   "intervalo de confianza del 95 % obtenido remuestreando las réplicas de estabilidad de cada modelo. "
                    if stab_on else "")
                 + f"Un par se consideró convergente cuando la similitud fue ≥ {cfg['tau_strong']}, parcial "
                 f"cuando estuvo entre {cfg['tau_partial']} y {cfg['tau_strong']}, y divergente (sin correspondencia "
                 "convincente, aunque el algoritmo húngaro siempre proponga una pareja) en otro caso. Estos umbrales "
-                "son decisiones de este análisis y no criterios de validación universales"
+                "son decisiones de este análisis y no criterios de validación universales; por ello se informa la "
+                "clasificación resultante con τ fuerte entre 0.40 y 0.60 y τ parcial entre 0.20 y 0.40 como análisis "
+                "de sensibilidad"
                 + (", al igual que el TRI, que se propone como un indicador descriptivo; cuando no se dispuso de la "
                    "estabilidad de alguno de los temas, el TRI se informó como no disponible" if stab_on else "")
                 + ". Para cada par se informan los términos compartidos y el documento más representativo de cada "
@@ -613,9 +734,14 @@ def build(R, path, meta, sections=None):
 
         if "T8b_inference" in T:
             W.h(f"2.{next(s)}. Inferencia estadística", 2)
+            bca = cfg.get("boot_method") == "bca"
             W.p("Para cuantificar la incertidumbre de la comparación se calcularon intervalos de confianza del "
-                f"95 % mediante bootstrap percentil {cite('efron')} con {cfg['n_boot']} remuestreos de documentos "
-                "para la coherencia NPMI media de cada modelo, su diferencia y los índices ARI y NMI; para la "
+                f"95 % mediante bootstrap {'BCa ' + cite('efron87') if bca else 'percentil ' + cite('efron')} con "
+                f"{f(cfg['n_boot'], 0)} remuestreos de documentos para la coherencia NPMI media de cada modelo, su "
+                "diferencia y los índices ARI y NMI"
+                + (" (la aceleración se estimó con un jackknife agrupado de 100 bloques)" if bca else "")
+                + ". Las estimaciones puntuales se calcularon con todos los documentos y son las que se informan en "
+                "todas las tablas y en el texto; el bootstrap solo aporta el intervalo. Para la "
                 "estabilidad media se usaron intervalos basados en la distribución t sobre los temas. Las "
                 "diferencias entre modelos en los valores por tema se contrastaron con la prueba U de "
                 f"Mann-Whitney bilateral {cite('mann')}, informando el tamaño del efecto r = |Z|/√N."
@@ -626,13 +752,17 @@ def build(R, path, meta, sections=None):
                 "volver a entrenar los modelos"
                 + ("; esa variación se aproximó con el análisis de estabilidad, que reajusta los modelos con "
                    "distintas semillas." if stab_on else "; esa variación no se evaluó en este análisis."))
-        if "T10_most_cited" in T or "cocit" in FIG:
+        if "T10_most_cited" in T or "cocit" in FIG or R.on("citations"):
             W.h(f"2.{next(s)}. Análisis de citas", 2)
             W.p("Se identificaron los documentos más citados del corpus (citas totales y citas por año) y los más "
                 "citados dentro de cada tema"
                 + (". Además, a partir de las referencias citadas se construyó una red de co-citación "
                    f"{cite('small')} con las 40 referencias más citadas localmente; las referencias se "
-                   "normalizaron como primer autor y año." if "cocit" in FIG else "."))
+                   "normalizaron como primer autor y año" if "cocit" in FIG else "")
+                + (f", y una red de acoplamiento bibliográfico {cite('kessler')} entre los 40 documentos más citados "
+                   "del corpus, ponderada por el número de referencias compartidas" if "T14_bibliographic_coupling" in T else "")
+                + (". Las exportaciones no incluían las referencias citadas (campo CR), por lo que no fue posible el "
+                   "análisis de co-citación ni el de acoplamiento bibliográfico." if not X.get("cr_available") else "."))
         if "callon" in FIG or "sankey" in FIG:
             W.h(f"2.{next(s)}. Mapa temático y evolución temática", 2)
             W.p("Las palabras clave de autor se agruparon mediante el algoritmo de Louvain sobre la red de "
@@ -654,7 +784,9 @@ def build(R, path, meta, sections=None):
                 f"intrusa {cite('chang')}, en la que debía identificar el término ajeno entre cinco términos "
                 "principales del tema y uno de otro tema. El acuerdo entre evaluadores se estimó con el alfa de "
                 f"Krippendorff {cite('hayes')} (nivel de intervalo para las calificaciones y nominal para la "
-                "palabra intrusa).")
+                f"palabra intrusa) y con la kappa de Fleiss {cite('fleiss')} para la elección de la palabra intrusa; "
+                "para cada tema se informa la precisión de la prueba de intrusión (proporción de evaluadores que "
+                "identificaron el término ajeno).")
         if R.ai.get("discussion") or R.ai.get("labels_used") or meta.get("ai_title"):
             W.h(f"2.{next(s)}. Uso de inteligencia artificial", 2)
             W.p("Se utilizó un modelo de lenguaje (", (meta.get("ai_model") or "Claude", "hl"), ", Anthropic) "
@@ -671,14 +803,22 @@ def build(R, path, meta, sections=None):
 
         W.h(f"2.{next(s)}. Reproducibilidad", 2)
         v = R.versions
-        W.p("Todos los análisis se realizaron con la aplicación web BiblioTopic, que ejecuta Python "
-            f"{v.get('python')} en el navegador (Pyodide) con pandas {v.get('pandas')}, scikit-learn "
-            f"{v.get('scikit-learn')}, SciPy {v.get('scipy')}, networkx {v.get('networkx')} y matplotlib "
-            f"{v.get('matplotlib')}. Se fijó la semilla aleatoria {cfg['seed']}. Se proporcionan como material "
-            "suplementario el script de Python con la configuración efectiva del análisis (parámetros, semilla y "
-            "nombres de los temas), las tablas intermedias, la trazabilidad de la fusión de registros y la "
-            "asignación de temas por documento. Con los mismos archivos de entrada y versiones de las librerías, "
-            "el script reproduce la depuración, la bibliometría y LDA"
+        from .pipeline import __version__ as _ver
+        seeds = R.seed_registry() if hasattr(R, "seed_registry") else {"global": cfg["seed"]}
+        W.p(f"Todos los análisis se realizaron con BiblioTopic {_ver} (perfil «"
+            + {"publication": "Publicación", "quick": "Exploración rápida"}.get(cfg.get("profile"), str(cfg.get("profile")))
+            + f"»), que ejecuta Python {v.get('python')} en el navegador (Pyodide) con pandas {v.get('pandas')}, "
+            f"scikit-learn {v.get('scikit-learn')}, SciPy {v.get('scipy')}, networkx {v.get('networkx')} y matplotlib "
+            f"{v.get('matplotlib')}. Se fijó la semilla aleatoria global {cfg['seed']}, de la que derivan las demás"
+            + (f" ({len(seeds.get('k_selection', []))} semillas por K en la selección del número de temas, "
+               f"{len(seeds.get('lda_stability', []))} réplicas de estabilidad de LDA y {len(seeds.get('umap_5d', [])) - 1 if seeds.get('umap_5d') else 0} "
+               "de BERTopic)" if seeds.get("k_selection") or seeds.get("lda_stability") else "")
+            + ". Se proporcionan como material suplementario la configuración efectiva (run_config.json: "
+            "parámetros, semillas, archivos de entrada con su suma MD5 y número de registros, ecuaciones de búsqueda "
+            "y disponibilidad de campos por base), el script de Python que reproduce el análisis, las tablas "
+            "intermedias, la trazabilidad de la fusión de registros y la asignación de temas por documento. Con los "
+            "mismos archivos de entrada y versiones de las librerías, el script reproduce la depuración, la "
+            "bibliometría y LDA"
             + ("; en BERTopic, las implementaciones de los embeddings y de UMAP del script (sentence-transformers y "
                "umap-learn) difieren de las del navegador, por lo que la composición de los grupos puede variar "
                "ligeramente" if bert is not None else "")
@@ -870,21 +1010,42 @@ def build(R, path, meta, sections=None):
                        f"coherencia NPMI media fue {f(ch['LDA']['mean'], 3)} (IC 95 %: {f(ch['LDA']['lo'], 3)} a "
                        f"{f(ch['LDA']['hi'], 3)}) en LDA y {f(ch['BERTopic']['mean'], 3)} ({f(ch['BERTopic']['lo'], 3)} "
                        f"a {f(ch['BERTopic']['hi'], 3)}) en BERTopic; la diferencia ({f(d['mean'], 3)}; IC 95 %: "
-                       f"{f(d['lo'], 3)} a {f(d['hi'], 3)}; p = {f(d['p'], 3)}) fue {sig}. ")
+                       f"{f(d['lo'], 3)} a {f(d['hi'], 3)}; p {fp(d['p'])}) fue {sig}. ")
                 tc = inf["t_coh"]
                 if not np.isnan(tc["p"]):
                     txt += (f"La comparación de la coherencia por tema con la prueba U de Mann-Whitney dio "
-                            f"U = {f(tc['U'], 1)}, p = {f(tc['p'], 3)} (r = {f(tc['r'], 2)}). ")
+                            f"U = {f(tc['U'], 1)}, p {fp(tc['p'])} (r = {f(tc['r'], 3)}). ")
                 ts = inf["t_stab"]
                 if stab_on and not np.isnan(ts["p"]):
                     txt += (f"La estabilidad media fue {f(inf['stab_lda'][0], 3)} (IC 95 %: {f(inf['stab_lda'][1], 3)} "
                             f"a {f(inf['stab_lda'][2], 3)}) en LDA y {f(inf['stab_bert'][0], 3)} "
                             f"({f(inf['stab_bert'][1], 3)} a {f(inf['stab_bert'][2], 3)}) en BERTopic (U = "
-                            f"{f(ts['U'], 1)}, p = {f(ts['p'], 3)}). ")
+                            f"{f(ts['U'], 1)}, p {fp(ts['p'])}). ")
                 if X.get("tri_ci"):
                     m_, lo_, hi_ = X["tri_ci"]
                     txt += f"El TRI medio de los pares emparejados fue {f(m_, 3)} (IC 95 %: {f(lo_, 3)} a {f(hi_, 3)})."
                 W.p(txt)
+            extra = []
+            bm = T.get("topic_best_matches")
+            if bm is not None and len(bm):
+                nm = int((bm["Hungarian = best"] == "No").sum())
+                extra.append(f"en {pl(nm, 'tema', 'temas')} de {len(bm)} la pareja asignada por el emparejamiento uno a "
+                             "uno no fue su mejor correspondencia en el otro modelo" if nm else
+                             "la pareja de cada tema coincidió con su mejor correspondencia en el otro modelo")
+            mt = C["matches"]
+            if "Above chance" in mt and mt["Above chance"].isin(["Yes", "No"]).any():
+                pr = mt[mt["Above chance"].isin(["Yes", "No"])]
+                extra.append(f"{int((pr['Above chance'] == 'Yes').sum())} de {len(pr)} pares superaron la similitud "
+                             f"esperada por azar (permutación, p < 0.05; percentil 95 nulo global = "
+                             f"{f(C['null']['p95_global'], 3)})" if C.get("null") else "")
+            sens = T.get("tau_sensitivity")
+            if sens is not None and len(sens):
+                extra.append(f"al variar los umbrales, el número de pares convergentes osciló entre "
+                             f"{int(sens['Convergent'].min())} y {int(sens['Convergent'].max())} y el de divergentes "
+                             f"entre {int(sens['Divergent'].min())} y {int(sens['Divergent'].max())}")
+            extra = [e for e in extra if e]
+            if extra:
+                W.p("Además, " + enum_es(extra) + f"{ref('topic_best_matches', 'tau_sensitivity')}.")
 
         if "hj_country" in FIG:
             hjc = X["hj_country"]
@@ -945,12 +1106,15 @@ def build(R, path, meta, sections=None):
                 t_ = V["tests"].get("interpretability", {})
                 if t_ and not np.isnan(t_.get("p", np.nan)):
                     txt += (f"La diferencia en interpretabilidad entre modelos fue U = {f(t_['U'], 1)}, "
-                            f"p = {f(t_['p'], 3)}. ")
+                            f"p {fp(t_['p'])}. ")
             txt += ("El acuerdo entre evaluadores (alfa de Krippendorff) fue "
                     + enum_es([f"{f(al[k], 2)} para {n}" for k, n in (("interpretability", "la interpretabilidad"),
                                                                        ("coherence", "la coherencia"),
                                                                        ("intrusion", "la palabra intrusa"))
                                if al.get(k) is not None and not np.isnan(al[k])]) + ".")
+            fk = (V.get("fleiss_kappa") or {}).get("intrusion")
+            if fk is not None and not np.isnan(fk):
+                txt += f" La kappa de Fleiss para la elección de la palabra intrusa fue {f(fk, 3)}."
             W.p(txt)
 
     # ============================================================== DISCUSIÓN (IA)

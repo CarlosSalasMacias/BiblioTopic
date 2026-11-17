@@ -1,6 +1,6 @@
 // BiblioTopic — interfaz (hilo principal). El trabajo pesado ocurre en js/worker.js.
 const $ = (id) => document.getElementById(id);
-const worker = new Worker(new URL("./worker.js?v=20261113", import.meta.url), { type: "module" });
+const worker = new Worker(new URL("./worker.js?v=20261117", import.meta.url), { type: "module" });
 const state = { analyses: {}, sections: {}, summary: null, labels: null, busy: false, aiLabels: false, aiModel: "" };
 
 const DEPENDS = { compare: ["lda", "bertopic"], inference: ["compare", "lda", "bertopic"], strategic: ["lda"],
@@ -21,6 +21,8 @@ const TABLE_TITLES = {
   doc_agreement: "Coincidencia por documento", T9_topic_alignment: "Emparejamiento de temas",
   T4_countries: "Países", T2_top_sources: "Fuentes principales", T8b_inference: "Inferencia estadística (IC 95 %)",
   T10_most_cited: "Documentos más citados", T11_thematic_map: "Mapa temático", T12_expert_validation: "Validación por expertos",
+  topic_best_matches: "Mejor correspondencia de cada tema (muchos a uno)", tau_sensitivity: "Sensibilidad a los umbrales τ",
+  T14_bibliographic_coupling: "Acoplamiento bibliográfico", periods: "Periodos", merge_conflicts: "Duplicados con datos discrepantes",
 };
 
 function toast(msg, ms = 5000) {
@@ -91,11 +93,16 @@ function showSummary(s) {
     <p class="hint">Completitud de campos (%): resumen ${av.AB} · afiliaciones ${av.C1} · palabras clave ${av.DE} ·
       citas ${av.TC} · tipo de documento ${av.DT} · DOI ${av.DI}</p>
     ${s.errors.map((e) => `<div class="warn err">${e}</div>`).join("")}
-    ${warns.map((w) => `<div class="warn">${w}</div>`).join("")}`;
+    ${warns.map((w) => `<div class="warn">${w}</div>`).join("")}
+    ${auditHtml(s.audit)}
+    ${topKwHtml(s.top_keywords)}`;
+  state.auditBlock = !!(s.audit && s.audit.critical_low.length);
+  state.loaded = true;
+  applyProfile($("o-profile").value);
   // opciones dependientes de los datos
   $("o-ymin").value = s.year_min;
-  // por defecto, hasta el último año completo
-  $("o-ymax").value = Math.min(s.year_max, new Date().getFullYear() - 1);
+  // el año en curso se incluye en los descriptivos; las tendencias y la tasa de crecimiento lo excluyen
+  $("o-ymax").value = s.year_max;
   const unk = (f) => Object.values((s.unknown || {})[f] || {}).reduce((a, b) => a + b, 0);
   const unkBy = (f) => Object.entries((s.unknown || {})[f] || {}).map(([k, v]) => `${k}: ${v.toLocaleString()}`).join(" · ");
   chips("o-dt", s.doc_types, ["Article", "Review"], unk("DT"), unkBy("DT"));
@@ -105,6 +112,37 @@ function showSummary(s) {
 
 // Valores del campo + «Sin dato» (registros sin el campo: p. ej., Scopus sin columna de idioma). Los
 // registros sin dato no son «otro idioma»: se conservan por defecto y la decisión queda explícita.
+// Auditoría de campos por base y por archivo; si un campo crítico está por debajo del 90 % en alguna base,
+// el análisis queda bloqueado hasta que el usuario lo confirme.
+const FIELD_NAMES = { AB: "Resumen", DE: "Palabras clave de autor", ID: "Index Keywords / Keywords Plus", LA: "Idioma",
+  DT: "Tipo de documento", PY: "Año", DI: "DOI", TC: "Citas", C1: "Afiliaciones", RP: "Autor de correspondencia",
+  CR: "Referencias citadas", "RP/C1": "Correspondencia o afiliación" };
+function auditHtml(a) {
+  if (!a) return "";
+  const fields = ["AB", "DE", "ID", "LA", "DT", "PY", "DI", "TC", "C1", "RP", "CR"];
+  const crit = new Set(a.critical);
+  const cell = (v, f) => `<td class="${(crit.has(f) || (f === "C1" || f === "RP")) && v < a.critical_min ? "low" : ""}">${v}</td>`;
+  const row = (name, v) => `<tr><th>${escH(name)}${v._n ? ` <span class="hint">(${v._n.toLocaleString()})</span>` : ""}</th>${fields.map((f) => cell(v[f], f)).join("")}</tr>`;
+  const head = `<tr><th></th>${fields.map((f) => `<th title="${FIELD_NAMES[f]}">${f}</th>`).join("")}</tr>`;
+  const low = a.critical_low;
+  return `<details class="audit" ${low.length ? "open" : ""}><summary>Auditoría de campos (% de registros con el campo)</summary>
+    <table class="audit-t"><thead>${head}</thead><tbody>
+      ${Object.entries(a.by_db).map(([db, v]) => row(db, v)).join("")}
+      <tr><td colspan="${fields.length + 1}" class="hint">Por archivo</td></tr>
+      ${Object.entries(a.by_file).map(([fn, v]) => row(fn, v)).join("")}</tbody></table></details>
+    ${low.length ? `<div class="warn err"><b>Campos críticos incompletos:</b>
+      ${low.map((l) => `${FIELD_NAMES[l.field] || l.field} (${l.field}) en ${l.db}: ${l.pct} %`).join("; ")}.
+      Los registros sin el dato no se excluyen (se conservan y se informan aparte), pero el análisis puede quedar
+      sesgado. Lo recomendable es volver a exportar con todos los campos (ver «Cómo exportar»).
+      <label class="confirm"><input type="checkbox" id="audit-ok"> Entiendo la advertencia y quiero continuar con estos archivos</label></div>` : ""}`;
+}
+function topKwHtml(t) {
+  if (!t || !t.keywords.length) return "";
+  return `<details class="topkw"><summary>Las 50 palabras clave más frecuentes (${t.field}), tras la normalización automática</summary>
+    <p class="hint">Revise si hay variantes del mismo concepto y añádalas al archivo de sinónimos (opciones avanzadas).</p>
+    <div class="kwlist">${t.keywords.map(([k, n]) => `<span>${escH(k)} <b>${n}</b></span>`).join("")}</div></details>`;
+}
+
 function chips(id, counts, defaults, unknown = 0, unknownBy = "") {
   const box = $(id);
   const keys = Object.keys(counts);
@@ -138,21 +176,9 @@ $("analyses").addEventListener("change", (e) => {
 $("b-run").onclick = () => {
   const analyses = checked("analyses");
   if (!analyses.length) return toast("Seleccione al menos un análisis.");
-  const num = (id) => Number($(id).value);
-  const cfg = {
-    analyses,
-    year_min: num("o-ymin") || null, year_max: num("o-ymax") || null,
-    doc_types: checked("o-dt").length ? checked("o-dt") : null,
-    languages: checked("o-la").length ? checked("o-la") : null,
-    keep_unknown_language: keepUnknown("o-la"), keep_unknown_type: keepUnknown("o-dt"),
-    query_terms: csv($("o-q").value), extra_stopwords: csv($("o-sw").value), synonyms: $("o-syn").value,
-    k_min: num("o-kmin"), k_max: num("o-kmax"), k_step: num("o-kstep"), k: num("o-k") || null,
-    bert_nr_topics: $("o-bnr").value === "lda" ? "lda" : null,
-    min_cluster_size: num("o-mcs") || null, n_stab_lda: num("o-slda"), n_stab_bert: num("o-sbert"),
-    period_width: num("o-pw"), min_df: num("o-mindf"), tau_strong: num("o-tau"), seed: num("o-seed"),
-    n_boot: num("o-boot"), cluster_shape: $("o-shape").value, composite: $("m-comp").checked,
-    export_tiff: $("m-tiff").checked,
-  };
+  const cfg = buildCfg();
+  if (state.auditBlock && !$("audit-ok")?.checked)
+    return toast("Confirme la advertencia de campos incompletos (paso 1) antes de ejecutar el análisis.", 9000);
   if (cfg.k_min >= cfg.k_max && !cfg.k) return toast("K mínimo debe ser menor que K máximo.");
   busy(true);
   $("run-status").hidden = false;
@@ -161,9 +187,114 @@ $("b-run").onclick = () => {
   worker.postMessage({ cmd: "run", cfg });
 };
 
+const num = (id) => Number($(id).value);
+function searchCfg() {
+  return { search_scopus: $("q-scopus").value.trim(), search_wos: $("q-wos").value.trim(),
+    search_date: $("q-date").value, wos_indexes: [...$("q-idx").querySelectorAll("input:checked")].map((i) => i.value) };
+}
+function buildCfg() {
+  const analyses = checked("analyses");
+  return {
+    config_version: 2, profile: $("o-profile").value, analyses,
+    year_min: num("o-ymin") || null, year_max: num("o-ymax") || null,
+    doc_types: checked("o-dt").length ? checked("o-dt") : null,
+    languages: checked("o-la").length ? checked("o-la") : null,
+    keep_unknown_language: keepUnknown("o-la"), keep_unknown_type: keepUnknown("o-dt"),
+    keep_unknown_year: !$("o-unk-year").checked,
+    query_terms: csv($("o-q").value), extra_stopwords: csv($("o-sw").value), synonyms: $("o-syn").value,
+    citation_source: $("o-tc").value,
+    k_min: num("o-kmin"), k_max: num("o-kmax"), k_step: num("o-kstep"), k: num("o-k") || null,
+    k_fine_window: num("o-kfine"), k_seeds: num("o-kseeds"), lda_method: $("o-ldamethod").value,
+    lda_max_iter: num("o-ldaiter"), lda_doc_prior: num("o-alpha") || null, lda_word_prior: num("o-eta") || null,
+    bert_nr_topics: $("o-bnr").value === "lda" ? "lda" : null, embedding_model: $("o-emb").value,
+    min_cluster_size: num("o-mcs") || null, min_samples: num("o-msamp") || null, outlier_threshold: num("o-othr"),
+    n_stab_lda: num("o-slda"), n_stab_bert: num("o-sbert"),
+    n_boot: Math.min(num("o-boot"), 5000), boot_method: $("o-bootm").value, n_perm: num("o-perm"),
+    tau_strong: num("o-tau"), tau_partial: num("o-taup"), trend_test: $("o-trend").value,
+    period_mode: $("o-pmode").value, period_width: num("o-pw"), n_periods: num("o-np"), custom_periods: $("o-pcustom").value,
+    min_df: num("o-mindf"), seed: num("o-seed"), cluster_shape: $("o-shape").value,
+    composite: $("m-comp").checked, export_tiff: $("m-tiff").checked, ...searchCfg(),
+  };
+}
+
+// valores de cada perfil (los mismos que PROFILES en bibliotopic/pipeline.py)
+const PROFILES = {
+  publication: { "o-boot": 1000, "o-bootm": "percentile", "o-perm": 1000, "o-slda": 10, "o-sbert": 10,
+    "o-kmin": 5, "o-kmax": 40, "o-kstep": 5, "o-kfine": 5, "o-kseeds": 3, "o-ldamethod": "batch", "o-ldaiter": 100 },
+  quick: { "o-boot": 200, "o-bootm": "percentile", "o-perm": 200, "o-slda": 3, "o-sbert": 3,
+    "o-kmin": 5, "o-kmax": 30, "o-kstep": 5, "o-kfine": 0, "o-kseeds": 1, "o-ldamethod": "online", "o-ldaiter": 20 },
+};
+function applyProfile(name) {
+  for (const [id, v] of Object.entries(PROFILES[name])) $(id).value = v;
+  requestEstimate();
+}
+$("o-profile").addEventListener("change", (e) => applyProfile(e.target.value));
+let estTimer = null;
+function requestEstimate() {
+  clearTimeout(estTimer);
+  estTimer = setTimeout(() => { if (!state.busy && state.loaded) worker.postMessage({ cmd: "estimate", cfg: buildCfg() }); }, 400);
+}
+for (const id of ["o-kmin", "o-kmax", "o-kstep", "o-kfine", "o-kseeds", "o-ldamethod", "o-ldaiter", "o-slda", "o-sbert",
+  "o-boot", "o-k", "o-emb", "analyses"]) $(id).addEventListener("change", requestEstimate);
+function showEstimate(e) {
+  const fmt = (m) => (m >= 90 ? `${(m / 60).toFixed(1)} h` : `${Math.max(1, Math.round(m))} min`);
+  $("estimate").textContent = `Tiempo estimado en el navegador: ~${fmt(e.minutes)} (LDA ${fmt(e.lda_minutes)}; BERTopic ${fmt(e.bertopic_minutes)}) · ${e.n_docs.toLocaleString()} documentos con resumen.`;
+  const local = e.local_minutes_1core;
+  $("estimate-warn").innerHTML = e.minutes > 60
+    ? `<div class="warn">Con este perfil y este corpus el análisis tardaría unas ${fmt(e.minutes)} en el navegador
+       (la pestaña debe quedar abierta). Alternativas sin rebajar los valores: (1) descargue el script con esta
+       configuración y ejecútelo en su computadora: ~${fmt(local)} con un núcleo, y aproximadamente ese tiempo
+       dividido por el número de núcleos con <code>--nucleos</code>; (2) para explorar, use el perfil
+       «Exploración rápida» y luego repita con «Publicación». Puede ejecutarlo igualmente aquí.</div>` : "";
+}
+$("b-script-pre").onclick = () => { busy(true); worker.postMessage({ cmd: "script", meta: docMeta(), cfg: buildCfg() }); };
+$("f-syn").addEventListener("change", async (e) => {
+  const f = e.target.files[0];
+  if (f) $("o-syn").value = (await f.text()).replace(/^\ufeff/, "");
+  e.target.value = "";
+});
+$("b-syn-template").onclick = () => download("sinonimos.csv",
+  new TextEncoder().encode("term,canonical\narabica coffee,coffea arabica\nrobusta coffee,coffea canephora\n"), "text/csv");
+// términos de la búsqueda a partir de las ecuaciones (misma regla que io.extract_query_terms)
+function extractQueryTerms(...eqs) {
+  const out = [];
+  for (let q of eqs) {
+    if (!q) continue;
+    q = q.replace(/\b(AND\s+(NOT\s+)?)?(LIMIT-TO|EXCLUDE|PUBYEAR|DOCTYPE|LANGUAGE|SUBJAREA|SRCTYPE|PUBSTAGE|OA|AFFILCOUNTRY|EXACTKEYWORD|PY|DT|LA|WC|SU|CU|OG|SO|DOP)\b\s*(=|>|<|>=|<=)?\s*(\((?:[^()]|\([^()]*\))*\)|\d{4}|"[^"]*")/gi, " ");
+    q = q.replace(/\b(TITLE-ABS-KEY|TITLE-ABS|TITLE|ABS|KEY|AUTHKEY|INDEXTERMS|ALL|TS|TI|AB|AK|KP)\s*=?\s*/gi, " ");
+    for (;;) {
+      const m = /\bNOT\s*\(/i.exec(q);
+      if (!m) break;
+      let d = 0, i = m.index + m[0].length - 1;
+      for (; i < q.length; i++) { if (q[i] === "(") d++; if (q[i] === ")") d--; if (d === 0) break; }
+      q = q.slice(0, m.index) + " " + q.slice(i + 1);
+    }
+    q = q.replace(/\bNOT\s+("[^"]*"|\S+)/gi, " ");
+    for (const m of q.matchAll(/["{]([^"}]+)["}]/g)) out.push(m[1].replace(/[*?$]/g, "").trim().toLowerCase().replace(/\s+/g, " "));
+    q = q.replace(/["{][^"}]*["}]/g, " ");
+    for (let t of q.split(/[\s()]+/)) {
+      t = t.replace(/[*?$]/g, "").trim().toLowerCase().replace(/^(w|pre|near)\/\d+$/, "");
+      if (t && !["and", "or", "not", "near", "same", "pre", "w"].includes(t) && !/^[\d/=<>-]+$/.test(t) && t.length > 1) out.push(t);
+    }
+  }
+  return [...new Set(out.filter(Boolean))];
+}
+let qAuto = true;
+$("o-q").addEventListener("input", () => { qAuto = false; });
+for (const id of ["q-scopus", "q-wos"]) $(id).addEventListener("input", () => {
+  if (qAuto) $("o-q").value = extractQueryTerms($("q-scopus").value, $("q-wos").value).join(", ");
+});
+
 // ------------------------------------------------------------------ resultados
 let urls = [];
-function showResults({ figs, tables, labels }) {
+function showQuality(q) {
+  if (!q) return;
+  const icon = { red: "🔴", amber: "🟡", green: "🟢" };
+  $("quality").innerHTML = `<h3>Controles de calidad</h3><ul class="quality">${q.map((c) =>
+    `<li class="${c.level}">${icon[c.level]} <b>${escH(c.check)}</b> — ${escH(c.detail)}</li>`).join("")}</ul>`;
+}
+function showResults({ figs, tables, labels, quality }) {
+  showQuality(quality);
   $("s-results").hidden = false;
   $("s-write").hidden = false;
   urls.forEach(URL.revokeObjectURL);
@@ -300,7 +431,7 @@ $("b-ai-translate").onclick = async () => {
   busy(true);
   toast("Traduciendo los nombres al inglés…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261113");
+    const ai = await import("./ai.js?v=20261117");
     const out = await ai.translateLabels(key, inputs.map((i) => i.value), $("m-topic").value.trim());
     out.forEach((t, i) => { if (inputs[i] && t) { setFull(inputs[i].closest(".lrow"), t); inputs[i].closest(".lrow").classList.remove("es"); } });
     state.aiLabels = true;
@@ -319,7 +450,7 @@ $("b-ai-short").onclick = async () => {
   busy(true);
   toast("Pidiendo nombres cortos a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261113");
+    const ai = await import("./ai.js?v=20261117");
     const out = await ai.shortenLabels(key, rows.map((r) => r.querySelector("input.full").value), $("m-topic").value.trim());
     out.forEach((t, i) => {
       const sh = rows[i] && rows[i].querySelector("input.short");
@@ -340,7 +471,7 @@ $("b-ai-labels").onclick = async () => {
   busy(true);
   toast("Pidiendo propuestas de nombres a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261113");
+    const ai = await import("./ai.js?v=20261117");
     const ctx = await getContext();
     const out = await ai.suggestLabels(key, ctx, $("m-topic").value.trim());
     const byId = Object.fromEntries(out.map((t) => [t.id, t]));
@@ -367,7 +498,7 @@ $("b-ai-disc").onclick = async () => {
   out.hidden = false;
   out.textContent = "Redactando la Discusión (puede tardar 1–3 minutos)…";
   try {
-    const ai = await import("./ai.js?v=20261113");
+    const ai = await import("./ai.js?v=20261117");
     const ctx = await getContext();
     const meta = { topic_name: $("m-topic").value.trim() };
     const text = await ai.draftDiscussion(key, ctx, meta, (snap) => { out.textContent = snap; });
@@ -388,7 +519,7 @@ $("b-ai-disc").onclick = async () => {
 
 // ------------------------------------------------------------------ título
 function titleMeta() {
-  return { topic_name: $("m-topic").value.trim(), query: $("m-query").value.trim() };
+  return { topic_name: $("m-topic").value.trim(), query: queryText() };
 }
 function showTitles(list, source) {
   const fromAI = !!source;
@@ -427,7 +558,7 @@ $("b-ai-titles").onclick = async () => {
   busy(true);
   toast("Pidiendo propuestas de título a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261113");
+    const ai = await import("./ai.js?v=20261117");
     const ctx = await getContext();
     const out = await ai.suggestTitles(key, ctx, titleMeta());
     state.aiModel = ai.MODEL;
@@ -440,7 +571,12 @@ $("b-ai-titles").onclick = async () => {
 };
 
 // ------------------------------------------------------------------ redacción
-$("m-date").value = new Date().toLocaleDateString("es-ES");
+$("q-date").value = new Date().toISOString().slice(0, 10);
+function queryText() {
+  const q = searchCfg();
+  return [q.search_scopus && `Scopus: ${q.search_scopus}`, q.search_wos && `Web of Science: ${q.search_wos}`]
+    .filter(Boolean).join(" | ");
+}
 $("b-doc").onclick = () => {
   const sections = checked("sections");
   if (!sections.length) return toast("Seleccione al menos un apartado.");
@@ -450,7 +586,7 @@ $("b-doc").onclick = () => {
 };
 function docMeta() {
   return { topic_name: $("m-topic").value.trim(), title: $("m-title").value.trim(),
-    query: $("m-query").value.trim(), search_date: $("m-date").value.trim(),
+    query: queryText(), search_date: $("q-date").value, ...searchCfg(),
     composite: $("m-comp").checked, ai_model: state.aiModel ? "Claude Opus 5.5" : "",
     ai_title: !!state.titleAI, sections: checked("sections") };
 }
@@ -499,8 +635,12 @@ worker.onmessage = ({ data: m }) => {
       $("stage").textContent = `${m.stage} · ${fmtTime(m.elapsed)}`;
       setBar("bar", 0);
       break;
+    case "estimate":
+      showEstimate(m.estimate);
+      break;
     case "prepared":
-      $("pmsg").textContent = `${m.prep.documents.toLocaleString()} documentos · vocabulario de ${m.prep.vocabulary.toLocaleString()} términos`;
+      $("pmsg").textContent = `${(m.prep.bibliometric_documents ?? m.prep.documents).toLocaleString()} documentos en el corpus bibliométrico · `
+        + `${m.prep.documents.toLocaleString()} con resumen para el modelado de temas · vocabulario de ${m.prep.vocabulary.toLocaleString()} términos`;
       break;
     case "results":
       busy(false);

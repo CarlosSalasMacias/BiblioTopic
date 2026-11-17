@@ -97,3 +97,16 @@ button.ai { border-color: #8C6BB1; color: #8C6BB1; }
 .labels .lrow.es input.full { border-color: var(--warn); box-shadow: 0 0 0 1px var(--warn); }
 .labels .shortl { grid-column: 2; font-size: 12px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
 .labels .shortl input { flex: 1; font-size: 12px; padding: 2px 6px; }
+.profile-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 4px 0 10px; }
+.audit-t { border-collapse: collapse; font-size: 12px; margin: 6px 0; overflow-x: auto; display: block; }
+.audit-t th, .audit-t td { padding: 3px 6px; border-bottom: 1px solid var(--line, #ddd); text-align: right; }
+.audit-t th:first-child { text-align: left; }
+.audit-t td.low { color: #b42318; font-weight: 700; }
+.warn.err .confirm { display: block; margin-top: 6px; font-weight: 600; }
+.kwlist { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; }
+.kwlist b { color: var(--muted); font-weight: 500; }
+.quality { list-style: none; padding: 0; margin: 6px 0 14px; font-size: 13px; }
+.quality li { padding: 4px 0; }
+.quality li.red b { color: #b42318; }
+.grid h4 { margin: 10px 0 0; font-size: 13px; grid-column: 1 / -1; }
+.small { font-size: 12px; padding: 2px 8px; }

@@ -51,15 +51,16 @@ def bh_adjust(p):
     return q
 
 
-def topic_trends(theta, years, min_docs_year=10, exclude_years=(), alpha=0.05):
-    """Pendiente OLS de la prevalencia media anual de cada tema (Griffiths & Steyvers, 2004), con IC 95 %.
+def topic_trends(theta, years, min_docs_year=10, exclude_years=(), alpha=0.05, test="mann_kendall"):
+    """Tendencia de la prevalencia media anual de cada tema.
 
-    - Solo años con al menos min_docs_year documentos; en corpus pequeños el mínimo se rebaja (a la mitad,
-      hasta 1) hasta tener 3 años. Con menos de 3 años la tendencia es «Not estimable».
-    - exclude_years: años excluidos (p. ej., el año en curso, incompleto).
-    - Clasificación con p ajustado por Benjamini-Hochberg entre temas (pruebas múltiples): Hot / Cold si
-      q < alpha; si no, «No significant trend» (que no equivale a demostrar estabilidad).
-    Las tendencias describen el corpus recuperado y son exploratorias."""
+    - Regresión lineal (OLS; Griffiths & Steyvers, 2004): pendiente con IC 95 %.
+    - Mann-Kendall (tau de Kendall frente al año) con pendiente de Sen (Theil-Sen) e IC 95 %: no paramétrico.
+    - Benjamini-Hochberg sobre todos los temas para cada prueba. La clasificación (Hot / Cold / «No significant
+      trend») usa la q de la prueba elegida en test ("mann_kendall", por defecto, u "ols").
+    - Solo años con al menos min_docs_year documentos (en corpus pequeños el mínimo se rebaja a la mitad, hasta 1,
+      hasta tener 3 años); con menos de 3 años la tendencia es «Not estimable». exclude_years: p. ej., el año en
+      curso, incompleto. Las tendencias describen el corpus recuperado y son exploratorias."""
     df = pd.DataFrame(theta)
     df["Y"] = np.asarray(years).astype(int)
     if len(exclude_years):
@@ -74,19 +75,31 @@ def topic_trends(theta, years, min_docs_year=10, exclude_years=(), alpha=0.05):
     rows = []
     for t in range(theta.shape[1]):
         if n_years >= 3:
-            r = stats.linregress(m.index.values, m[t].values)
+            x, y = m.index.values.astype(float), m[t].values
+            r = stats.linregress(x, y)
             h = r.stderr * stats.t.ppf(0.975, n_years - 2) if np.isfinite(r.stderr) else np.nan
-            p_ = r.pvalue if np.isfinite(r.pvalue) else 1.0
-            rows.append((r.slope, r.stderr, r.slope - h, r.slope + h, p_))
+            p_ols = r.pvalue if np.isfinite(r.pvalue) else 1.0
+            if np.ptp(y) > 0:
+                tau, p_mk = stats.kendalltau(x, y)
+                sen = stats.theilslopes(y, x, 0.95)
+                sen_s, sen_lo, sen_hi = sen[0], sen[2], sen[3]
+            else:
+                tau, p_mk, sen_s, sen_lo, sen_hi = 0.0, 1.0, 0.0, 0.0, 0.0
+            rows.append((r.slope, r.stderr, r.slope - h, r.slope + h, p_ols, tau,
+                         p_mk if np.isfinite(p_mk) else 1.0, sen_s, sen_lo, sen_hi))
         else:
-            rows.append((np.nan, np.nan, np.nan, np.nan, np.nan))
-    out = pd.DataFrame(rows, columns=["Slope", "SE", "CI low", "CI high", "p-value"])
+            rows.append((np.nan,) * 10)
+    out = pd.DataFrame(rows, columns=["Slope", "SE", "CI low", "CI high", "p-value", "Kendall tau",
+                                      "MK p-value", "Sen slope", "Sen CI low", "Sen CI high"])
     out["q-value (BH)"] = bh_adjust(out["p-value"].values)
+    out["MK q-value (BH)"] = bh_adjust(out["MK p-value"].values)
     out["Years used"] = n_years
+    q = out["MK q-value (BH)"] if test == "mann_kendall" else out["q-value (BH)"]
+    direction = out["Sen slope"] if test == "mann_kendall" else out["Slope"]
     out["Trend"] = np.where(out["p-value"].isna(), NOT_ESTIMABLE,
-                            np.where(out["q-value (BH)"] < alpha, np.where(out["Slope"] > 0, HOT, COLD),
-                                     NO_TREND))
-    out.attrs.update(min_docs_year=thr, n_years=n_years, alpha=alpha,
+                            np.where(q < alpha, np.where(direction > 0, HOT, COLD), NO_TREND))
+    out["Test"] = "Mann-Kendall" if test == "mann_kendall" else "OLS"
+    out.attrs.update(min_docs_year=thr, n_years=n_years, alpha=alpha, test=test,
                      years=(int(m.index.min()), int(m.index.max())) if n_years else None,
                      excluded_years=[int(y) for y in exclude_years])
     return out, m
@@ -110,12 +123,16 @@ def _representative(lda, bert, titles):
     return rl, rb
 
 
-def compare(lda, bert, years, min_docs_year=10, tau_strong=0.5, tau_partial=0.3, exclude_years=(), titles=None):
+def compare(lda, bert, years, min_docs_year=10, tau_strong=0.5, tau_partial=0.3, exclude_years=(), titles=None,
+            n_perm=0, seed=42, trend_test="ols", alpha=0.05, n_boot=1000):
     S = similarity_matrix(lda, bert)
     J = jaccard_matrix(lda, bert)
     r, c = linear_sum_assignment(-S.values)
-    tl, _ = topic_trends(lda.theta, years, min_docs_year, exclude_years)
-    tb, _ = topic_trends(bert.theta, years, min_docs_year, exclude_years)
+    from .stats import permutation_null_cosine, tri_pair_ci
+    tl, _ = topic_trends(lda.theta, years, min_docs_year, exclude_years, alpha=alpha, test=trend_test)
+    tb, _ = topic_trends(bert.theta, years, min_docs_year, exclude_years, alpha=alpha, test=trend_test)
+    null = permutation_null_cosine(lda.beta, bert.ctfidf, n_perm, seed) if n_perm else None
+    reps_l, reps_b = getattr(lda, "stab_reps", None), getattr(bert, "stab_reps", None)
     rep_l, rep_b = _representative(lda, bert, titles)
     rows = []
     matched_b = set()
@@ -131,7 +148,13 @@ def compare(lda, bert, years, min_docs_year=10, tau_strong=0.5, tau_partial=0.3,
             "Cosine": round(s, 3), "Jaccard top-10": round(J.values[i, j], 3),
             "Shared terms": ", ".join(w for w in lda.top10[i] if w in set(bert.top10[j])),
             "Stability LDA": round(lda.stab[i], 3), "Stability BERTopic": round(bert.stab[j], 3),
+            "Cosine null p (permutation)": round(float(null["p"][i, j]), 4) if null else np.nan,
+            "Cosine null 95th percentile": round(float(null["p95_pair"][i, j]), 3) if null else np.nan,
+            "Above chance": ("Yes" if null["p"][i, j] < 0.05 else "No") if null else "",
             "TRI": round(tri, 3) if np.isfinite(tri) else np.nan,
+            "TRI 95% CI": (lambda ci: f"[{ci[0]:.3f}, {ci[1]:.3f}]" if np.isfinite(ci[0]) else "")(
+                tri_pair_ci(s, reps_l[:, i], reps_b[:, j], n_boot, seed))
+            if np.isfinite(tri) and reps_l is not None and reps_b is not None else "",
             "TRI note": "" if np.isfinite(tri) else "Not available: topic stability was not computed",
             "Agreement": cat,
             "Trend LDA": tl["Trend"][i], "Trend BERTopic": tb["Trend"][j],
@@ -152,6 +175,39 @@ def compare(lda, bert, years, min_docs_year=10, tau_strong=0.5, tau_partial=0.3,
                          "Agreement": "LDA-only", "Trend LDA": tl["Trend"][i], "_i": i, "_j": -1})
     matches = pd.DataFrame(rows).sort_values("Cosine", ascending=False, na_position="last")
 
+    # mejor correspondencia de cada tema en el otro modelo (muchos a uno), para ver cuándo el emparejamiento
+    # húngaro fuerza pares sin sentido
+    hung = dict(zip(r, c))
+    hung_b = {j: i for i, j in hung.items()}
+    best = []
+    for i in range(lda.k):
+        j = int(np.argmax(S.values[i]))
+        best.append({"Model": "LDA", "Topic": lda.labels[i], "Best match": bert.labels[j],
+                     "Best cosine": round(float(S.values[i, j]), 3),
+                     "Hungarian partner": bert.labels[hung[i]] if i in hung else "-",
+                     "Hungarian cosine": round(float(S.values[i, hung[i]]), 3) if i in hung else np.nan,
+                     "Hungarian = best": "Yes" if hung.get(i) == j else "No"})
+    for j in range(bert.k):
+        i = int(np.argmax(S.values[:, j]))
+        best.append({"Model": "BERTopic", "Topic": bert.labels[j], "Best match": lda.labels[i],
+                     "Best cosine": round(float(S.values[i, j]), 3),
+                     "Hungarian partner": lda.labels[hung_b[j]] if j in hung_b else "-",
+                     "Hungarian cosine": round(float(S.values[hung_b[j], j]), 3) if j in hung_b else np.nan,
+                     "Hungarian = best": "Yes" if hung_b.get(j) == i else "No"})
+    best = pd.DataFrame(best)
+
+    # sensibilidad de la clasificación a los umbrales τ (decisiones del análisis)
+    pc = np.array([S.values[i, j] for i, j in zip(r, c)])
+    sens = []
+    for ts in np.round(np.arange(0.40, 0.601, 0.05), 2):
+        for tp in np.round(np.arange(0.20, 0.401, 0.05), 2):
+            if tp >= ts:
+                continue
+            sens.append({"tau_strong": ts, "tau_partial": tp, "Convergent": int((pc >= ts).sum()),
+                         "Partial": int(((pc >= tp) & (pc < ts)).sum()), "Divergent": int((pc < tp).sum()),
+                         "Selected": "Yes" if (abs(ts - tau_strong) < 1e-9 and abs(tp - tau_partial) < 1e-9) else ""})
+    sens = pd.DataFrame(sens)
+
     ok = bert.topics_raw >= 0
     metrics = pd.DataFrame({
         "Metric": ["Number of topics", "Mean NPMI coherence", "Mean UMass coherence",
@@ -166,7 +222,10 @@ def compare(lda, bert, years, min_docs_year=10, tau_strong=0.5, tau_partial=0.3,
                      100 * bert.prevalence.min(), int((tb["Trend"] == "Hot").sum()),
                      int((tb["Trend"] == "Cold").sum())],
     })
-    metrics[["LDA", "BERTopic"]] = metrics[["LDA", "BERTopic"]].astype(float).round(3)
+    metrics[["LDA", "BERTopic"]] = metrics[["LDA", "BERTopic"]].astype(float)
+    pct = metrics["Metric"].str.contains("%")
+    metrics.loc[pct, ["LDA", "BERTopic"]] = metrics.loc[pct, ["LDA", "BERTopic"]].round(1)
+    metrics.loc[~pct, ["LDA", "BERTopic"]] = metrics.loc[~pct, ["LDA", "BERTopic"]].round(3)
 
     # coincidencia a nivel documento
     agreement = {
@@ -183,10 +242,11 @@ def compare(lda, bert, years, min_docs_year=10, tau_strong=0.5, tau_partial=0.3,
     agreement = {k: round(float(v), 3) for k, v in agreement.items()}
 
     cont = pd.crosstab(pd.Series([lda.ids[x] for x in lda.dominant], name="LDA"),
-                       pd.Series([bert.ids[x] for x in bert.topics], name="BERTopic"))
+                       pd.Series([bert.ids[x] if x >= 0 else "Unassigned" for x in bert.topics], name="BERTopic"))
     cont = cont.reindex(index=lda.ids, columns=bert.ids, fill_value=0)
     return {"S": S, "J": J, "matches": matches, "metrics": metrics, "agreement": agreement,
-            "trends_lda": tl, "trends_bert": tb, "contingency": cont}
+            "trends_lda": tl, "trends_bert": tb, "contingency": cont, "best_matches": best,
+            "threshold_sensitivity": sens, "null": null}
 
 
 def strategic_map(theta, df, trends, labels):
