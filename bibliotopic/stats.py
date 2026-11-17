@@ -68,83 +68,82 @@ def _groups(n, g=100, seed=0):
     return np.array_split(idx, min(n, g))
 
 
-def bootstrap_coherence(corpus, models: dict, B=1000, seed=42, topn=10, method="percentile"):
-    """NPMI medio de cada modelo y su diferencia. La estimación puntual se calcula con todos los documentos (es
-    la misma que en el resto de tablas); el bootstrap (remuestreo de documentos con reemplazo) aporta solo el IC
-    95 %. Se informa también la media bootstrap, rotulada como tal."""
-    words = sorted({w for tw in models.values() for t in tw for w in t[:topn] if w in corpus.word_index})
+def topic_npmi(corpus, topics_words, topn=10):
+    """NPMI de cada tema (media de sus pares de palabras) con todos los documentos; igual que Corpus.npmi pero
+    con matrices dispersas para todos los temas a la vez."""
+    words = sorted({w for t in topics_words for w in t[:topn] if w in corpus.word_index})
     col = {w: i for i, w in enumerate(words)}
-    # Matriz binaria documento × palabra (dispersa) y, para cada par de palabras necesario, la indicadora de
-    # «el documento contiene ambas». Un remuestreo bootstrap equivale a pesos w (veces que sale cada documento):
-    # frecuencias = Xs.T @ w y co-ocurrencias = P.T @ w. Es exactamente el mismo cálculo que remuestrear filas,
-    # pero sin multiplicar matrices densas (lento en el navegador, que no tiene BLAS optimizado).
     Xs = corpus.Xbin[:, [corpus.word_index[w] for w in words]].tocsc().astype(np.float64)
-    pairs, plist, pidx = {}, [], {}
-    for name, tw in models.items():
-        pairs[name] = []
-        for t in tw:
-            ids = [col[w] for w in t[:topn] if w in col]
-            tp = []
-            for i in range(len(ids)):
-                for j in range(i + 1, len(ids)):
-                    key = (ids[i], ids[j])
-                    if key not in pidx:
-                        pidx[key] = len(plist)
-                        plist.append(key)
-                    tp.append(pidx[key])
-            pairs[name].append(np.array(tp, int))
-    pa = np.array([p[0] for p in plist], int)
-    pb = np.array([p[1] for p in plist], int)
-    P = (Xs[:, pa].multiply(Xs[:, pb])).tocsc() if len(plist) else None
-    XsT, PT = Xs.T.tocsr(), (P.T.tocsr() if P is not None else None)
-
-    def npmi_means(w, n):
-        """NPMI medio de cada modelo con pesos por documento w (n = suma de pesos)."""
-        df = XsT @ w
-        co = PT @ w if PT is not None else np.zeros(0)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            pij = co / n
-            v = np.log(pij / ((df[pa] / n) * (df[pb] / n))) / -np.log(pij)
-        v = np.where(co == 0, -1.0, np.where(pij >= 1, 1.0, v))
-        out = {}
-        for name in models:
-            per_topic = [float(np.mean(v[tp])) if len(tp) else np.nan for tp in pairs[name]]
-            out[name] = float(np.nanmean(per_topic)) if per_topic else np.nan
-        return out
-
     n = Xs.shape[0]
-    point = npmi_means(np.ones(n), n)
+    df = np.asarray(Xs.sum(axis=0)).ravel()
+    out = []
+    for t in topics_words:
+        ids = [col[w] for w in t[:topn] if w in col]
+        vals = []
+        for i in range(len(ids)):
+            for j in range(i + 1, len(ids)):
+                a, b = ids[i], ids[j]
+                c = float(Xs[:, a].multiply(Xs[:, b]).sum())
+                if c == 0:
+                    vals.append(-1.0)
+                    continue
+                pij = c / n
+                if pij >= 1:
+                    vals.append(1.0)
+                    continue
+                vals.append(float(np.log(pij / ((df[a] / n) * (df[b] / n))) / -np.log(pij)))
+        out.append(float(np.mean(vals)) if vals else np.nan)
+    return np.array(out)
+
+
+def bootstrap_coherence(corpus, models: dict, B=1000, seed=42, topn=10, method="percentile"):
+    """NPMI medio de cada modelo y su diferencia, con IC 95 % por bootstrap **sobre los temas** (cada tema es una
+    observación; se remuestrean los temas de cada modelo de forma independiente).
+
+    La estimación puntual es la media del NPMI de los temas calculado con todos los documentos (la misma de las
+    demás tablas). No se remuestrean documentos: duplicar unos y omitir otros cambia las co-ocurrencias y sesga
+    a la baja el NPMI de los términos poco frecuentes, hasta dejar la estimación fuera de su propio intervalo.
+    Remuestrear temas es además coherente con la prueba U de Mann-Whitney, que también compara temas. BCa usa la
+    aceleración del jackknife que omite un tema cada vez."""
+    vals = {}
+    for name, tw in models.items():
+        v = topic_npmi(corpus, tw, topn)
+        vals[name] = v[np.isfinite(v)]
+    point = {name: float(np.mean(v)) if len(v) else np.nan for name, v in vals.items()}
     rng = np.random.default_rng(seed)
     boots = {name: [] for name in models}
     for _ in range(B):
-        idx = rng.integers(0, n, n)
-        r = npmi_means(np.bincount(idx.astype(np.intp), minlength=n).astype(np.float64), n)
-        for name in models:
-            boots[name].append(r[name])
-    jack = None
-    if method == "bca":
-        jack = {name: [] for name in models}
-        for g in _groups(n, seed=seed):
-            keep = np.ones(n)
-            keep[g] = 0.0
-            r = npmi_means(keep, keep.sum())
-            for name in models:
-                jack[name].append(r[name])
+        for name, v in vals.items():
+            boots[name].append(float(np.mean(v[rng.integers(0, len(v), len(v))])) if len(v) else np.nan)
+    loo = {name: [float(np.mean(np.delete(v, i))) for i in range(len(v))] if len(v) > 2 else None
+           for name, v in vals.items()}
     res = {}
-    for name, v in boots.items():
-        lo, hi = ci_from_boot(v, point[name], method, jack[name] if jack else None)
-        res[name] = {"point": point[name], "mean": point[name], "boot_mean": float(np.nanmean(v)), "lo": lo, "hi": hi}
+    for name, b in boots.items():
+        lo, hi = ci_from_boot(b, point[name], method, loo[name] if method == "bca" else None)
+        res[name] = {"point": point[name], "mean": point[name], "boot_mean": float(np.nanmean(b)), "lo": lo,
+                     "hi": hi, "n_topics": int(len(vals[name]))}
     names = list(models)
     if len(names) == 2:
-        d = np.array(boots[names[0]]) - np.array(boots[names[1]])
-        dp = point[names[0]] - point[names[1]]
-        dj = (np.array(jack[names[0]]) - np.array(jack[names[1]])) if jack else None
+        a, c = names
+        d = np.array(boots[a]) - np.array(boots[c])
+        dp = point[a] - point[c]
+        dj = None
+        if method == "bca" and loo[a] and loo[c]:  # jackknife de dos muestras: se omite un tema de cada modelo
+            dj = [x - point[c] for x in loo[a]] + [point[a] - y for y in loo[c]]
         lo, hi = ci_from_boot(d, dp, method, dj)
         p = 2 * min((d <= 0).mean(), (d >= 0).mean())
-        res["difference"] = {"label": f"{names[0]} - {names[1]}", "point": float(dp), "mean": float(dp),
+        if method == "bca":  # p coherente con el IC BCa: menor nivel al que el intervalo excluye el 0
+            p = 1.0
+            for alpha in np.linspace(0.001, 0.999, 999):
+                l_, h_ = ci_from_boot(d, dp, "bca", dj, level=1 - alpha)
+                if np.isfinite(l_) and (l_ > 0 or h_ < 0):
+                    p = float(alpha)
+                    break
+        res["difference"] = {"label": f"{a} - {c}", "point": float(dp), "mean": float(dp),
                              "boot_mean": float(d.mean()), "lo": lo, "hi": hi, "p": float(max(p, 1 / B))}
     res["method"] = method
     res["B"] = B
+    res["unit"] = "topics"
     return res
 
 
@@ -256,7 +255,7 @@ def inference_table(corpus, lda, bert, B=1000, seed=42, method="percentile"):
     lab = "BCa" if method == "bca" else "percentile"
     rows = [
         ("Mean NPMI coherence", coh["LDA"], coh["BERTopic"], t_coh,
-         f"Point estimates on all documents; {lab} bootstrap CI ({B} resamples). Difference "
+         f"Point estimates on all documents; {lab} bootstrap CI over topics ({B} resamples). Difference "
          f"{d['point']:.3f} [{d['lo']:.3f}, {d['hi']:.3f}], bootstrap p = {fmt_p(d['p'])}. Bootstrap means: "
          f"LDA {coh['LDA']['boot_mean']:.3f}, BERTopic {coh['BERTopic']['boot_mean']:.3f}"),
         ("Mean topic stability", {"point": st_l[0], "lo": st_l[1], "hi": st_l[2]},

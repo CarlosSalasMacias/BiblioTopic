@@ -165,3 +165,25 @@ def test_palettes_valid_and_theme_choice():
     assert P.choose(['TITLE-ABS-KEY ( coffee OR "coffea arabica" )'], ["coffee", "soil", "shade"])[0] == "earth"
     assert P.choose([], ["machine learning", "energy", "battery"])[0] == "tech"
     assert P.choose([], [])[0] == "classic"
+
+
+def test_coherence_ci_over_topics_contains_point():
+    """El IC de la coherencia se obtiene remuestreando temas: contiene la estimación puntual y, con BCa, el valor
+    p es coherente con el intervalo."""
+    import pandas as pd
+    from bibliotopic.stats import bootstrap_coherence, topic_npmi
+    from bibliotopic.text import Corpus
+    rng = np.random.default_rng(0)
+    T = [["coffee", "rust", "fungus", "leaf", "spore"], ["soil", "nitrogen", "fertilizer", "yield", "compost"],
+         ["shade", "tree", "bird", "canopy", "agroforestry"], ["roast", "aroma", "flavor", "acid", "cup"]]
+    C = Corpus(pd.DataFrame([{"TI": " ".join(rng.choice(T[i % 4], 3)), "AB": " ".join(rng.choice(T[i % 4] + T[(i + 1) % 4][:1], 30)),
+                              "PY": 2000} for i in range(200)]))
+    lda_tw = [list(t) for t in T]
+    bert_tw = [T[0][:3] + T[1][:2], T[2][:3] + T[3][:2], T[1][2:] + T[0][3:], T[3][:3] + T[2][3:]]
+    assert np.allclose(topic_npmi(C, lda_tw), C.npmi(lda_tw))
+    for m in ("percentile", "bca"):
+        r = bootstrap_coherence(C, {"LDA": lda_tw, "BERTopic": bert_tw}, B=300, method=m)
+        for k in ("LDA", "BERTopic", "difference"):
+            assert r[k]["lo"] <= r[k]["point"] <= r[k]["hi"]
+        d = r["difference"]
+        assert (d["p"] < 0.05) == (d["lo"] > 0 or d["hi"] < 0) or m == "percentile"

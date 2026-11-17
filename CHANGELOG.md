@@ -85,6 +85,12 @@ repetir con la versión 2 los análisis hechos con la versión 1.
 | **Punto de control automático** al terminar LDA y BERTopic (se guarda en el navegador). Si algo falla después, al recargar la página aparece «Recuperar el último análisis», que solo repite las figuras y tablas. | Un fallo al final ya no obliga a repetir horas de modelado. |
 | Aviso si el análisis no informa avances durante 10 min, errores visibles en el panel de progreso y **tiempo por etapa** al terminar. | Distinguir un análisis lento de uno detenido. |
 
+### Corrección metodológica: intervalo de confianza de la coherencia NPMI
+
+| Cambio | Justificación |
+|---|---|
+| El IC 95 % de la coherencia NPMI media de cada modelo y de su diferencia se obtiene por bootstrap **sobre los temas** (cada tema es una observación; se remuestrean los temas de cada modelo de forma independiente). BCa usa el jackknife que omite un tema; su valor p es el menor nivel al que el intervalo BCa excluye el 0. ARI y NMI siguen remuestreando documentos. | Al remuestrear documentos, duplicar unos y omitir otros altera las co-ocurrencias y sesga a la baja el NPMI de los términos poco frecuentes: en el corpus del café, el NPMI de BERTopic (0.218) quedaba fuera de su propio IC [0.153, 0.202] y el BCa daba un intervalo degenerado. Con temas como unidad, el intervalo contiene la estimación ([0.149, 0.292]) y es coherente con la prueba U de Mann-Whitney, que también compara temas. Los intervalos son más anchos: reflejan la incertidumbre real con el número de temas disponible. |
+
 ### Paleta de colores de las figuras
 
 | Cambio | Justificación |

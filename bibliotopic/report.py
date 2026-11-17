@@ -319,8 +319,8 @@ TAB_CAPTIONS = {
     "T9_topic_alignment": ("Alignment between LDA and BERTopic topics (Hungarian matching).",
                            "TRI: Topic Robustness Index = cosine × √(stability_LDA × stability_BERTopic)."),
     "T8b_inference": ("Statistical comparison of LDA and BERTopic (95% confidence intervals).",
-                      "Coherence and agreement: percentile bootstrap over documents; stability: t-based CI over "
-                      "topics; tests: two-sided Mann-Whitney U on per-topic values (r = |Z|/√N)."),
+                      "Coherence: bootstrap over topics; agreement (ARI, NMI): bootstrap over documents; stability: "
+                      "t-based CI over topics; tests: two-sided Mann-Whitney U on per-topic values (r = |Z|/√N)."),
     "T10_most_cited": ("Most cited documents in the corpus.", None),
     "T11_thematic_map": ("Thematic clusters of author keywords (Callon centrality and density).", None),
     "T12_expert_validation": ("Expert validation of the topics (mean and 95% CI across topics).",
@@ -742,9 +742,13 @@ def build(R, path, meta, sections=None):
             bca = cfg.get("boot_method") == "bca"
             W.p("Para cuantificar la incertidumbre de la comparación se calcularon intervalos de confianza del "
                 f"95 % mediante bootstrap {'BCa ' + cite('efron87') if bca else 'percentil ' + cite('efron')} con "
-                f"{f(cfg['n_boot'], 0)} remuestreos de documentos para la coherencia NPMI media de cada modelo, su "
-                "diferencia y los índices ARI y NMI"
-                + (" (la aceleración se estimó con un jackknife agrupado de 100 bloques)" if bca else "")
+                f"{f(cfg['n_boot'], 0)} remuestreos. Para la coherencia NPMI media de cada modelo y su diferencia "
+                "se remuestrearon los temas (cada tema es una observación, igual que en la prueba U de Mann-Whitney); "
+                "no se remuestrearon documentos porque duplicar y omitir documentos altera las co-ocurrencias y sesga "
+                "a la baja el NPMI de los términos poco frecuentes. Para los índices ARI y NMI se remuestrearon los "
+                "documentos"
+                + (" (la aceleración se estimó con un jackknife que omite un tema cada vez para la coherencia y con un "
+                   "jackknife agrupado de 100 bloques de documentos para ARI y NMI)" if bca else "")
                 + ". Las estimaciones puntuales se calcularon con todos los documentos y son las que se informan en "
                 "todas las tablas y en el texto; el bootstrap solo aporta el intervalo. Para la "
                 "estabilidad media se usaron intervalos basados en la distribución t sobre los temas. Las "
@@ -752,8 +756,8 @@ def build(R, path, meta, sections=None):
                 f"Mann-Whitney bilateral {cite('mann')}, informando el tamaño del efecto r = |Z|/√N."
                 + (" Para el TRI medio de los pares emparejados se obtuvo también un intervalo bootstrap."
                    if X.get("tri_ci") else "")
-                + " Estos intervalos están condicionados a los temas ya ajustados: remuestrean los documentos "
-                "manteniendo fijas las palabras de cada tema, por lo que no recogen la variación que produciría "
+                + " Estos intervalos están condicionados a los temas ya ajustados (las palabras de cada tema se "
+                "mantienen fijas), por lo que no recogen la variación que produciría "
                 "volver a entrenar los modelos"
                 + ("; esa variación se aproximó con el análisis de estabilidad, que reajusta los modelos con "
                    "distintas semillas." if stab_on else "; esa variación no se evaluó en este análisis."))
