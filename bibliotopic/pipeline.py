@@ -947,7 +947,8 @@ class Session:
             # primera validación del TRI: ¿los pares más robustos son los que mejor valoran los expertos?
             X["tri_experts"] = None
             if X.get("C") is not None and lda is not None and bert is not None and self.validation.get("per_topic") is not None:
-                te = ST.tri_expert_correlation(X["C"]["matches"], lda.ids, bert.ids, self.validation["per_topic"])
+                te = ST.tri_expert_correlation(X["C"]["matches"], lda.ids, bert.ids, self.validation["per_topic"],
+                                               B=int(c.get("n_boot") or 1000), seed=c["seed"])
                 if te:
                     T["T12b_TRI_vs_experts"] = te["table"]
                     X["tri_experts"] = te

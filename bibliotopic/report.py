@@ -337,7 +337,8 @@ TAB_CAPTIONS = {
     "T13_cocited_references": ("Most cited references (local citations).", None),
     "T12b_TRI_vs_experts": ("Spearman correlation between topic robustness (TRI) and expert ratings across matched "
                             "LDA–BERTopic pairs.", "Expert ratings of a pair: mean of its two topics. Cosine and mean "
-                            "stability (geometric mean of both topics' stability) shown for comparison."),
+                            "stability (geometric mean of both topics' stability) shown for comparison. Brackets: 95% "
+                            "percentile bootstrap CI over pairs; Δρ rows: paired bootstrap of the difference."),
 }
 TAB_ORDER = ["T1_main_information", "T2_top_sources", "T4_countries", "T10_most_cited", "T13_cocited_references",
              "T11_thematic_map", "T6_LDA_topics", "T7_BERTopic_topics", "T8_model_metrics", "T8b_inference",
@@ -821,7 +822,10 @@ def build(R, path, meta, sections=None):
                 + (" Como primera validación empírica del TRI, se calculó la correlación de Spearman "
                    f"{cite('spearman')} entre el TRI de cada par emparejado y la valoración media de los expertos de "
                    "los dos temas del par (interpretabilidad, coherencia y precisión de la palabra intrusa), y se "
-                   "comparó con la que se obtiene usando solo el coseno o solo la estabilidad media."
+                   "comparó con la que se obtiene usando solo el coseno o solo la estabilidad media. Cada correlación "
+                   "se acompaña de un IC 95 % por bootstrap percentil sobre los pares, y las diferencias entre "
+                   "correlaciones se estimaron con un bootstrap pareado (los mismos pares remuestreados para ambos "
+                   "predictores), porque las correlaciones comparten datos y el TRI contiene la estabilidad."
                    if X.get("tri_experts") else ""))
         if R.ai.get("discussion") or R.ai.get("labels_used") or meta.get("ai_title"):
             W.h(f"2.{next(s)}. Uso de inteligencia artificial", 2)
@@ -1158,14 +1162,29 @@ def build(R, path, meta, sections=None):
 
                 def _r(pred, c):
                     v = F_.get((pred, c))
-                    return f"ρ = {f(v['rho'], 3)} (p {fp(v['p'])})" if v else "no estimable"
+                    if not v:
+                        return "no estimable"
+                    ci = (f", IC 95 %: {f(v['lo'], 3)} a {f(v['hi'], 3)}" if np.isfinite(v.get("lo", np.nan)) else "")
+                    return f"ρ = {f(v['rho'], 3)} (p {fp(v['p'])}{ci})"
+
+                def _d(other, c):
+                    v = F_.get(("TRI-" + other, c))
+                    if not v:
+                        return None
+                    sig = "distinta de cero" if (v["lo"] > 0 or v["hi"] < 0) else "no distinta de cero"
+                    return (f"Δρ = {f(v['diff'], 3)} (IC 95 %: {f(v['lo'], 3)} a {f(v['hi'], 3)}; bootstrap p "
+                            f"{fp(v['p'])}), {sig}")
                 W.p(f"En los {te['n_pairs']} pares emparejados con valoración de los expertos{ref('T12b_TRI_vs_experts')}, "
                     f"la correlación del TRI con la interpretabilidad media fue {_r('TRI', 'interpretability')}, con la "
                     f"coherencia {_r('TRI', 'coherence')} y con la precisión de la palabra intrusa "
                     f"{_r('TRI', 'model_precision')}. Con el coseno solo, la correlación con la interpretabilidad fue "
                     f"{_r('Cosine', 'interpretability')}, y con la estabilidad media sola, "
-                    f"{_r('Mean stability', 'interpretability')}. Con este número de pares, estas correlaciones son "
-                    "exploratorias.")
+                    f"{_r('Mean stability', 'interpretability')}."
+                    + (f" La diferencia entre el TRI y la estabilidad sola fue {_d('Mean stability', 'interpretability')}"
+                       + (f", y entre el TRI y el coseno solo, {_d('Cosine', 'interpretability')}"
+                          if _d('Cosine', 'interpretability') else "") + "."
+                       if _d('Mean stability', 'interpretability') else "")
+                    + " Con este número de pares, estas correlaciones son exploratorias.")
 
     # ============================================================== DISCUSIÓN (IA)
     corpus_refs = []

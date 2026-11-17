@@ -83,7 +83,8 @@ def test_tri_expert_validation_in_report(session, tmp_path, monkeypatch):
     try:
         S.render(str(tmp_path))
         assert "T12b_TRI_vs_experts" in S.tables
-        assert list(S.tables["T12b_TRI_vs_experts"]["Predictor"]) == ["TRI", "Cosine", "Mean stability"]
+        assert list(S.tables["T12b_TRI_vs_experts"]["Predictor"]) == ["TRI", "Cosine", "Mean stability",
+                                                                       "TRI − mean stability", "TRI − cosine"]
         report.build(S, str(tmp_path / "doc.docx"), {"topic_name": "coffee"}, None)
         txt = "\n".join(p.text for p in Document(str(tmp_path / "doc.docx")).paragraphs)
         assert "primera validación empírica del TRI" in txt and "correlación del TRI con la interpretabilidad" in txt

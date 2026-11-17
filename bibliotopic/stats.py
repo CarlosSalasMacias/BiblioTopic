@@ -331,10 +331,23 @@ def permutation_null_cosine(A, B, n_perm=1000, seed=42):
             "n_perm": n_perm}
 
 
-def tri_expert_correlation(matches, lda_ids, bert_ids, per_topic, min_pairs=5):
+def _spearman_fast(x, y):
+    """ρ de Spearman (rangos medios para empates) sin pruebas: para las réplicas bootstrap."""
+    rx, ry = stats.rankdata(x), stats.rankdata(y)
+    if np.std(rx) == 0 or np.std(ry) == 0:
+        return np.nan
+    return float(np.corrcoef(rx, ry)[0, 1])
+
+
+def tri_expert_correlation(matches, lda_ids, bert_ids, per_topic, min_pairs=5, B=1000, seed=42):
     """Primera validación empírica del TRI: correlación de Spearman, sobre los pares emparejados, entre el TRI (y,
     para comparar, sus componentes por separado: coseno y estabilidad media) y la valoración de los expertos del
     par (media de los dos temas: interpretabilidad, coherencia y precisión de la palabra intrusa).
+
+    Cada ρ lleva un IC 95 % por bootstrap percentil remuestreando pares, y se estiman las diferencias
+    ρ(TRI) − ρ(estabilidad) y ρ(TRI) − ρ(coseno) con bootstrap pareado (los mismos pares remuestreados para
+    ambos predictores): las correlaciones comparten datos y el TRI contiene la estabilidad, por lo que no son
+    independientes y no deben compararse solo por su valor puntual.
     Devuelve None si no hay al menos min_pairs pares con TRI y valoraciones."""
     import pandas as pd
     if matches is None or per_topic is None or "TRI" not in matches or "_i" not in matches:
@@ -357,16 +370,47 @@ def tri_expert_correlation(matches, lda_ids, bert_ids, per_topic, min_pairs=5):
         return None
     names = {"interpretability": "Interpretability (1-5)", "coherence": "Coherence (1-5)",
              "model_precision": "Word-intrusion precision"}
-    out, facts = [], {}
-    for pred in ("TRI", "Cosine", "Mean stability"):
-        row = {"Predictor": pred}
-        for c, nm in names.items():
-            ok = d[[pred, c]].dropna()
-            if len(ok) >= min_pairs and ok[pred].nunique() > 1 and ok[c].nunique() > 1:
-                rho, p = stats.spearmanr(ok[pred], ok[c])
-                row[nm] = f"ρ = {rho:.3f} (p {('= ' + fmt_p(p)) if p >= 0.001 else fmt_p(p)}; n = {len(ok)})"
-                facts[(pred, c)] = {"rho": float(rho), "p": float(p), "n": int(len(ok))}
+    preds = ("TRI", "Cosine", "Mean stability")
+    rng = np.random.default_rng(seed)
+    out, facts, diffs = {p_: {"Predictor": p_} for p_ in preds}, {}, []
+    for c, nm in names.items():
+        ok = d[list(preds) + [c]].dropna()
+        n = len(ok)
+        usable = n >= min_pairs and ok[c].nunique() > 1
+        boots = {p_: [] for p_ in preds}
+        if usable:
+            X = {p_: ok[p_].values for p_ in preds}
+            y = ok[c].values
+            for _ in range(int(B)):
+                idx = rng.integers(0, n, n)
+                for p_ in preds:
+                    boots[p_].append(_spearman_fast(X[p_][idx], y[idx]))
+        for p_ in preds:
+            if usable and ok[p_].nunique() > 1:
+                rho, p = stats.spearmanr(ok[p_], ok[c])
+                bb = np.array(boots[p_], float)
+                bb = bb[np.isfinite(bb)]
+                lo, hi = (np.percentile(bb, [2.5, 97.5]) if len(bb) >= 10 else (np.nan, np.nan))
+                out[p_][nm] = (f"ρ = {rho:.3f} [{lo:.3f}, {hi:.3f}] (p {('= ' + fmt_p(p)) if p >= 0.001 else fmt_p(p)}; "
+                               f"n = {n})")
+                facts[(p_, c)] = {"rho": float(rho), "p": float(p), "n": int(n), "lo": float(lo), "hi": float(hi)}
             else:
-                row[nm] = "n.a."
-        out.append(row)
-    return {"table": pd.DataFrame(out), "pairs": d, "facts": facts, "n_pairs": int(len(d))}
+                out[p_][nm] = "n.a."
+        for other in ("Mean stability", "Cosine"):
+            if (("TRI", c) in facts) and ((other, c) in facts):
+                dd = np.array(boots["TRI"], float) - np.array(boots[other], float)
+                dd = dd[np.isfinite(dd)]
+                if len(dd) < 10:
+                    continue
+                point = facts[("TRI", c)]["rho"] - facts[(other, c)]["rho"]
+                lo, hi = np.percentile(dd, [2.5, 97.5])
+                pv = float(max(2 * min((dd <= 0).mean(), (dd >= 0).mean()), 1 / len(dd)))
+                facts[("TRI-" + other, c)] = {"diff": float(point), "lo": float(lo), "hi": float(hi), "p": pv}
+                diffs.append((other, nm, f"Δρ = {point:.3f} [{lo:.3f}, {hi:.3f}] (bootstrap p {('= ' + fmt_p(pv)) if pv >= 0.001 else fmt_p(pv)})"))
+    table = pd.DataFrame([out[p_] for p_ in preds])
+    for other, label in (("Mean stability", "TRI − mean stability"), ("Cosine", "TRI − cosine")):
+        row = {"Predictor": label}
+        for c, nm in names.items():
+            row[nm] = next((t for o, n_, t in diffs if o == other and n_ == nm), "n.a.")
+        table = pd.concat([table, pd.DataFrame([row])], ignore_index=True)
+    return {"table": table, "pairs": d, "facts": facts, "n_pairs": int(len(d)), "B": int(B)}

@@ -187,3 +187,25 @@ def test_coherence_ci_over_topics_contains_point():
             assert r[k]["lo"] <= r[k]["point"] <= r[k]["hi"]
         d = r["difference"]
         assert (d["p"] < 0.05) == (d["lo"] > 0 or d["hi"] < 0) or m == "percentile"
+
+
+def test_tri_expert_correlation_ci_and_paired_difference():
+    """IC bootstrap de cada ρ y diferencia pareada TRI − estabilidad: el IC contiene la estimación puntual."""
+    import pandas as pd
+    from bibliotopic.stats import tri_expert_correlation
+    rng = np.random.default_rng(1)
+    n = 30
+    cos, sl, sb = rng.uniform(0.2, 0.9, n), rng.uniform(0.3, 1, n), rng.uniform(0.3, 1, n)
+    matches = pd.DataFrame({"_i": range(n), "_j": range(n), "Cosine": cos, "Stability LDA": sl,
+                            "Stability BERTopic": sb, "TRI": cos * np.sqrt(sl * sb)})
+    ids_l, ids_b = [f"L{i + 1}" for i in range(n)], [f"B{i + 1}" for i in range(n)]
+    q = np.sqrt(sl * sb)
+    pt = pd.DataFrame([{"model": m, "topic": t, "interpretability": 1 + 4 * q[i] + rng.normal(0, .3),
+                        "coherence": 1 + 4 * q[i] + rng.normal(0, .3), "model_precision": q[i]}
+                       for i in range(n) for m, t in (("LDA", ids_l[i]), ("BERTopic", ids_b[i]))])
+    r = tri_expert_correlation(matches, ids_l, ids_b, pt, B=300)
+    f = r["facts"][("TRI", "interpretability")]
+    assert f["lo"] <= f["rho"] <= f["hi"] and f["n"] == n
+    d = r["facts"][("TRI-Mean stability", "interpretability")]
+    assert d["lo"] <= d["diff"] <= d["hi"]
+    assert len(r["table"]) == 5
