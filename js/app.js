@@ -1,6 +1,6 @@
 // BiblioTopic — interfaz (hilo principal). El trabajo pesado ocurre en js/worker.js.
 const $ = (id) => document.getElementById(id);
-const worker = new Worker(new URL("./worker.js?v=20261117", import.meta.url), { type: "module" });
+const worker = new Worker(new URL("./worker.js?v=20261118", import.meta.url), { type: "module" });
 const state = { analyses: {}, sections: {}, summary: null, labels: null, busy: false, aiLabels: false, aiModel: "" };
 
 const DEPENDS = { compare: ["lda", "bertopic"], inference: ["compare", "lda", "bertopic"], strategic: ["lda"],
@@ -192,6 +192,19 @@ function searchCfg() {
   return { search_scopus: $("q-scopus").value.trim(), search_wos: $("q-wos").value.trim(),
     search_date: $("q-date").value, wos_indexes: [...$("q-idx").querySelectorAll("input:checked")].map((i) => i.value) };
 }
+// Procesos auxiliares para LDA: uno menos que los núcleos lógicos, hasta 6 (cada uno usa ~300 MB de memoria);
+// 2 como máximo si el navegador informa ≤ 4 GB de RAM. El resultado no depende del número de procesos.
+function autoWorkers() {
+  const hc = navigator.hardwareConcurrency || 2;
+  const mem = navigator.deviceMemory || 8;
+  return Math.max(1, Math.min(hc - 1, mem <= 4 ? 2 : 6));
+}
+function nWorkers() {
+  const v = $("o-workers").value;
+  return v === "auto" ? autoWorkers() : Number(v);
+}
+$("o-workers").options[0].textContent = `Automático (${autoWorkers()})`;
+
 function buildCfg() {
   const analyses = checked("analyses");
   return {
@@ -212,7 +225,7 @@ function buildCfg() {
     n_boot: Math.min(num("o-boot"), 5000), boot_method: $("o-bootm").value, n_perm: num("o-perm"),
     tau_strong: num("o-tau"), tau_partial: num("o-taup"), trend_test: $("o-trend").value,
     period_mode: $("o-pmode").value, period_width: num("o-pw"), n_periods: num("o-np"), custom_periods: $("o-pcustom").value,
-    min_df: num("o-mindf"), seed: num("o-seed"), cluster_shape: $("o-shape").value,
+    min_df: num("o-mindf"), seed: num("o-seed"), cluster_shape: $("o-shape").value, n_workers: nWorkers(),
     composite: $("m-comp").checked, export_tiff: $("m-tiff").checked, ...searchCfg(),
   };
 }
@@ -222,7 +235,7 @@ const PROFILES = {
   publication: { "o-boot": 1000, "o-bootm": "percentile", "o-perm": 1000, "o-slda": 10, "o-sbert": 10,
     "o-kmin": 5, "o-kmax": 40, "o-kstep": 5, "o-kfine": 5, "o-kseeds": 3, "o-ldamethod": "batch", "o-ldaiter": 100 },
   quick: { "o-boot": 200, "o-bootm": "percentile", "o-perm": 200, "o-slda": 3, "o-sbert": 3,
-    "o-kmin": 5, "o-kmax": 30, "o-kstep": 5, "o-kfine": 0, "o-kseeds": 1, "o-ldamethod": "online", "o-ldaiter": 20 },
+    "o-kmin": 5, "o-kmax": 30, "o-kstep": 5, "o-kfine": 0, "o-kseeds": 1, "o-ldamethod": "batch", "o-ldaiter": 30 },
 };
 function applyProfile(name) {
   for (const [id, v] of Object.entries(PROFILES[name])) $(id).value = v;
@@ -234,11 +247,12 @@ function requestEstimate() {
   clearTimeout(estTimer);
   estTimer = setTimeout(() => { if (!state.busy && state.loaded) worker.postMessage({ cmd: "estimate", cfg: buildCfg() }); }, 400);
 }
-for (const id of ["o-kmin", "o-kmax", "o-kstep", "o-kfine", "o-kseeds", "o-ldamethod", "o-ldaiter", "o-slda", "o-sbert",
+for (const id of ["o-kmin", "o-kmax", "o-kstep", "o-kfine", "o-kseeds", "o-ldamethod", "o-ldaiter", "o-slda", "o-sbert", "o-workers",
   "o-boot", "o-k", "o-emb", "analyses"]) $(id).addEventListener("change", requestEstimate);
 function showEstimate(e) {
   const fmt = (m) => (m >= 90 ? `${(m / 60).toFixed(1)} h` : `${Math.max(1, Math.round(m))} min`);
-  $("estimate").textContent = `Tiempo estimado en el navegador: ~${fmt(e.minutes)} (LDA ${fmt(e.lda_minutes)}; BERTopic ${fmt(e.bertopic_minutes)}) · ${e.n_docs.toLocaleString()} documentos con resumen.`;
+  const par = e.n_workers > 1 ? `, ${e.n_workers} procesos en paralelo` : "";
+  $("estimate").textContent = `Tiempo estimado en el navegador: ~${fmt(e.minutes)} (LDA ${fmt(e.lda_minutes)}${par}; BERTopic ${fmt(e.bertopic_minutes)}) · ${e.n_docs.toLocaleString()} documentos con resumen.`;
   const local = e.local_minutes_1core;
   $("estimate-warn").innerHTML = e.minutes > 60
     ? `<div class="warn">Con este perfil y este corpus el análisis tardaría unas ${fmt(e.minutes)} en el navegador
@@ -431,7 +445,7 @@ $("b-ai-translate").onclick = async () => {
   busy(true);
   toast("Traduciendo los nombres al inglés…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261117");
+    const ai = await import("./ai.js?v=20261118");
     const out = await ai.translateLabels(key, inputs.map((i) => i.value), $("m-topic").value.trim());
     out.forEach((t, i) => { if (inputs[i] && t) { setFull(inputs[i].closest(".lrow"), t); inputs[i].closest(".lrow").classList.remove("es"); } });
     state.aiLabels = true;
@@ -450,7 +464,7 @@ $("b-ai-short").onclick = async () => {
   busy(true);
   toast("Pidiendo nombres cortos a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261117");
+    const ai = await import("./ai.js?v=20261118");
     const out = await ai.shortenLabels(key, rows.map((r) => r.querySelector("input.full").value), $("m-topic").value.trim());
     out.forEach((t, i) => {
       const sh = rows[i] && rows[i].querySelector("input.short");
@@ -471,7 +485,7 @@ $("b-ai-labels").onclick = async () => {
   busy(true);
   toast("Pidiendo propuestas de nombres a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261117");
+    const ai = await import("./ai.js?v=20261118");
     const ctx = await getContext();
     const out = await ai.suggestLabels(key, ctx, $("m-topic").value.trim());
     const byId = Object.fromEntries(out.map((t) => [t.id, t]));
@@ -498,7 +512,7 @@ $("b-ai-disc").onclick = async () => {
   out.hidden = false;
   out.textContent = "Redactando la Discusión (puede tardar 1–3 minutos)…";
   try {
-    const ai = await import("./ai.js?v=20261117");
+    const ai = await import("./ai.js?v=20261118");
     const ctx = await getContext();
     const meta = { topic_name: $("m-topic").value.trim() };
     const text = await ai.draftDiscussion(key, ctx, meta, (snap) => { out.textContent = snap; });
@@ -558,7 +572,7 @@ $("b-ai-titles").onclick = async () => {
   busy(true);
   toast("Pidiendo propuestas de título a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261117");
+    const ai = await import("./ai.js?v=20261118");
     const ctx = await getContext();
     const out = await ai.suggestTitles(key, ctx, titleMeta());
     state.aiModel = ai.MODEL;

@@ -601,9 +601,14 @@ def build(R, path, meta, sections=None):
                             "el material suplementario. ")
             else:
                 ksel_txt = f"El número de temas se fijó en K = {lda.k}. "
-            method_txt = (f"inferencia variacional por lotes (batch) con un máximo de {lp['max_iter']} iteraciones y "
-                          f"criterio de convergencia sobre la perplejidad (el modelo final convergió en "
-                          f"{getattr(lda, 'n_iter', lp['max_iter'])} iteraciones)"
+            n_it = getattr(lda, "n_iter", lp["max_iter"])
+            conv_txt = (f"criterio de convergencia: cambio relativo de la perplejidad, evaluada cada "
+                        f"{lp.get('evaluate_every') or 10} iteraciones, inferior al {100 * lp['relative_tol']:.2g} %"
+                        if lp.get("relative_tol") else "sin criterio de convergencia")
+            method_txt = (f"inferencia variacional por lotes (batch) con un máximo de {lp['max_iter']} iteraciones ("
+                          f"{conv_txt}; el modelo final "
+                          + (f"convergió en {n_it} iteraciones)" if n_it < lp["max_iter"] and lp.get("relative_tol")
+                             else f"completó {n_it} iteraciones)")
                           if lp["learning_method"] == "batch" else
                           f"inferencia variacional en línea {cite('hoffman')} ({lp['max_iter']} iteraciones)")
             W.p(f"La asignación latente de Dirichlet (LDA) {cite('blei')} representa cada documento como una "

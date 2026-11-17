@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import io as _io
 import itertools
+import math
 import json
 import re
 import platform
@@ -18,7 +19,7 @@ from . import biblio, citations as CIT, compare, evolution as EVO, figures as F,
 from . import stats as ST
 from .bert_model import BERTResult
 from .hjbiplot import HJBiplot, make_periods, make_periods_mode
-from .lda_model import LDAResult, select_k
+from .lda_model import JobBroker, LDAResult, NeedJobs, corpus_payload, run_job_spec, select_k
 from .text import Corpus
 
 ANALYSES = {
@@ -60,13 +61,13 @@ PROFILES = {
         n_boot=1000, boot_method="percentile", n_perm=1000,
         n_stab_lda=10, n_stab_bert=10,
         k_min=5, k_max=40, k_step=5, k_fine_window=5, k_seeds=3,
-        lda_method="batch", lda_max_iter=100, lda_tol=0.1, lda_doc_prior=None, lda_word_prior=None,
+        lda_method="batch", lda_max_iter=100, lda_tol=0.001, lda_doc_prior=None, lda_word_prior=None,
     ),
     "quick": dict(
         n_boot=200, boot_method="percentile", n_perm=200,
         n_stab_lda=3, n_stab_bert=3,
         k_min=5, k_max=30, k_step=5, k_fine_window=0, k_seeds=1,
-        lda_method="online", lda_max_iter=20, lda_tol=0.1, lda_doc_prior=None, lda_word_prior=None,
+        lda_method="batch", lda_max_iter=30, lda_tol=0.001, lda_doc_prior=None, lda_word_prior=None,
     ),
 }
 
@@ -101,13 +102,19 @@ def estimate_runtime(n_docs: int, cfg: dict, nnz_per_doc: float = 70.0, browser:
     """Estimación del tiempo de ejecución (minutos). Calibrada con scikit-learn 1.6 en un equipo de referencia:
     un ajuste LDA batch de 100 iteraciones tarda ~45 s con 3 600 documentos (255 000 entradas no nulas) y en
     Pyodide (navegador, un solo hilo) es BROWSER_FACTOR veces más lento; UMAP en el navegador ~1.3 s por cada
-    1 000 documentos."""
+    1 000 documentos. Con el criterio de convergencia relativo, los ajustes batch se detienen de media en ~75 % de
+    max_iter. Con n_workers > 1 los ajustes de cada fase (selección gruesa, fina, modelo final + réplicas) se
+    reparten en rondas; cada proceso rinde ~75 % de uno solo cuando todos los núcleos están ocupados."""
     c = resolve_config(cfg)
     nnz = n_docs * nnz_per_doc
     per_iter = 45.0 / 100 / 255_000  # s por iteración y entrada no nula (batch)
     online_factor = 0.22 * 100 / 20  # online, por iteración, respecto a batch
-    it_cost = per_iter * (online_factor if c["lda_method"] == "online" else 1.0)
-    fit = lambda k, iters: nnz * iters * it_cost * (1 + max(k - 10, 0) / 120)  # noqa: E731
+    batch = c["lda_method"] != "online"
+    it_cost = per_iter * (1.0 if batch else online_factor)
+    conv = 0.75 if batch and c.get("lda_tol") else 1.0
+    fit = lambda k, iters: nnz * iters * conv * it_cost * (1 + max(k - 10, 0) / 120)  # noqa: E731
+    workers = max(1, int(c.get("n_workers") or 1))
+    rounds = lambda jobs: math.ceil(jobs / workers) * (1 / 0.75 if workers > 1 else 1.0)  # noqa: E731
     lda_s = 0.0
     on = set(c["analyses"])
     if "lda" in on:
@@ -115,9 +122,10 @@ def estimate_runtime(n_docs: int, cfg: dict, nnz_per_doc: float = 70.0, browser:
             ks = list(range(c["k_min"], c["k_max"] + 1, c["k_step"]))
             n_fine = 2 * c["k_fine_window"] if c["k_fine_window"] else 0
             kmid = (c["k_min"] + c["k_max"]) / 2
-            lda_s += (len(ks) + n_fine) * c["k_seeds"] * fit(kmid, c.get("lda_select_max_iter", c["lda_max_iter"]))
+            f = fit(kmid, c.get("lda_select_max_iter") or c["lda_max_iter"])
+            lda_s += (rounds(len(ks) * c["k_seeds"]) + rounds(n_fine * c["k_seeds"])) * f
         kf = c.get("k") or 15
-        lda_s += (1 + (c["n_stab_lda"] if "stability" in on else 0)) * fit(kf, c["lda_max_iter"])
+        lda_s += rounds(1 + (c["n_stab_lda"] if "stability" in on else 0)) * fit(kf, c["lda_max_iter"])
     bert_s = 0.0
     if "bertopic" in on:
         runs = 2 + (c["n_stab_bert"] if "stability" in on else 0)
@@ -125,9 +133,11 @@ def estimate_runtime(n_docs: int, cfg: dict, nnz_per_doc: float = 70.0, browser:
         bert_s += runs * (1.3 * n_docs / 1000 + 3 * n_docs / 1000)  # UMAP (JS) + HDBSCAN (Pyodide)
     other = 60 + n_docs * 0.01 + (c["n_boot"] / 1000) * n_docs * 0.004
     factor = BROWSER_FACTOR if browser else 1.0
-    total = factor * lda_s + bert_s + factor * other
-    return {"minutes": round(total / 60, 1), "lda_minutes": round(factor * lda_s / 60, 1),
-            "bertopic_minutes": round(bert_s / 60, 1), "profile": c["profile"], "browser": browser}
+    lda_factor = (BROWSER_FACTOR_SERIAL if workers == 1 else BROWSER_FACTOR) if browser else 1.0
+    total = lda_factor * lda_s + bert_s + factor * other
+    return {"minutes": round(total / 60, 1), "lda_minutes": round(lda_factor * lda_s / 60, 1),
+            "bertopic_minutes": round(bert_s / 60, 1), "profile": c["profile"], "browser": browser,
+            "n_workers": workers}
 
 
 def planned_seeds(c: dict, umap_runs: int) -> dict:
@@ -139,7 +149,10 @@ def planned_seeds(c: dict, umap_runs: int) -> dict:
             "validation_sheet": g}
 
 
-BROWSER_FACTOR = 2.0  # se ajusta tras la medición en Pyodide
+# Medido con 9 250 documentos (K = 15, 30 iteraciones): ~95 s por ajuste en el worker principal (3.5 veces
+# Python nativo) y ~70 s por ajuste con 3 workers auxiliares trabajando a la vez (2.0 × 1/0.75).
+BROWSER_FACTOR = 2.0
+BROWSER_FACTOR_SERIAL = 3.5
 
 
 def _versions():
@@ -344,6 +357,34 @@ class Session:
         c = self.cfg
         return dict(method=c["lda_method"], max_iter=c["lda_max_iter"], tol=c["lda_tol"],
                     doc_prior=c["lda_doc_prior"], word_prior=c["lda_word_prior"])
+
+    # LDA en paralelo en el navegador: el worker principal pide los ajustes pendientes y los reparte entre
+    # workers auxiliares; el resultado es idéntico al de la ejecución en serie (cada ajuste con su semilla).
+    def lda_parallel_begin(self):
+        self._broker = JobBroker()
+        return corpus_payload(self.corpus)
+
+    def lda_parallel_step(self, progress=None):
+        try:
+            return {"done": True, **self.run_lda(progress, executor=self._broker)}
+        except NeedJobs as e:
+            return {"done": False, "jobs": e.specs}
+
+    def lda_planned_jobs(self):
+        c = self.cfg
+        n_stab = c["n_stab_lda"] if self.on("stability") else 0
+        if c["k"]:
+            return 1 + n_stab
+        ks = range(c["k_min"], c["k_max"] + 1, c["k_step"])
+        fine = 2 * c["k_fine_window"] if c["k_fine_window"] else 0
+        return (len(ks) + fine) * max(1, int(c["k_seeds"])) + 1 + n_stab
+
+    def lda_put(self, spec_json, result):
+        self._broker.put(spec_json, result)
+
+    def lda_run_local(self, spec_json):
+        """Respaldo: ejecuta un ajuste en el worker principal (si un worker auxiliar falla)."""
+        self._broker.put(spec_json, run_job_spec(self.corpus, json.loads(spec_json)))
 
     def run_lda(self, progress=None, executor=None):
         """executor: opcional (p. ej., ProcessPoolExecutor en el script local) para ajustar en paralelo."""

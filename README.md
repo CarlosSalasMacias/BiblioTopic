@@ -16,12 +16,14 @@ defecto nuevos frente a los anteriores están en [CHANGELOG.md](CHANGELOG.md). L
 
 | Perfil | Para qué | Valores principales |
 |---|---|---|
-| **Publicación** (por defecto) | Resultados para el artículo | bootstrap 1000 (opción BCa), 1000 permutaciones, estabilidad con 10 semillas (LDA) y 10 semillas de UMAP (BERTopic), K en dos etapas (5–40 paso 5 y ±5 paso 1) con 3 semillas por K y 5 métricas, LDA batch hasta 100 iteraciones con priors 1/K, UMAP coseno |
-| **Exploración rápida** | Primera mirada al corpus | bootstrap 200, 3 semillas, K 5–30 paso 5 con 1 semilla, LDA online 20 iteraciones |
+| **Publicación** (por defecto) | Resultados para el artículo | bootstrap 1000 (opción BCa), 1000 permutaciones, estabilidad con 10 semillas (LDA) y 10 semillas de UMAP (BERTopic), K en dos etapas (5–40 paso 5 y ±5 paso 1) con 3 semillas por K y 5 métricas, LDA batch hasta 100 iteraciones (criterio de convergencia relativo) con priors 1/K, UMAP coseno |
+| **Exploración rápida** | Primera mirada al corpus | bootstrap 200, 3 semillas, K 5–30 paso 5 con 1 semilla, LDA batch 30 iteraciones |
 
-Antes de ejecutar, la aplicación estima el tiempo en el navegador. Con corpus grandes (~9 000 documentos) el perfil
-Publicación tarda ~4–5 h en el navegador; en ese caso conviene descargar el script (botón **Descargar script con
-esta configuración**, disponible antes de ejecutar) y correrlo en una computadora con varios núcleos:
+Antes de ejecutar, la aplicación estima el tiempo en el navegador. Los ajustes de LDA se reparten entre varios
+procesos del navegador (por defecto, los núcleos menos uno, hasta 6) con resultados idénticos a los de un solo
+proceso. Con ~9 000 documentos el perfil Publicación tarda ~1–1.5 h en una computadora de 6–8 núcleos. Para ir
+más rápido, descargue el script (botón **Descargar script con esta configuración**, disponible antes de ejecutar)
+y ejecútelo en una computadora con varios núcleos:
 
 ```bash
 python analisis_bibliotopic.py --nucleos 8

@@ -3,11 +3,16 @@
 Parámetros principales (todos se registran en la configuración efectiva):
 - method: "batch" (EM variacional por lotes, determinista para una semilla; por defecto) u "online"
   (Hoffman et al., 2010; más rápido, usado en versiones anteriores).
-- max_iter y tol: número máximo de iteraciones y criterio de convergencia (cambio de la perplejidad,
-  evaluada cada 5 iteraciones en el modo batch).
+- max_iter y tol: número máximo de iteraciones y criterio de convergencia en el modo batch: el ajuste se detiene
+  cuando la perplejidad, evaluada cada 10 iteraciones, cambia menos de tol en términos relativos (0.001 = 0.1 %).
+  El criterio absoluto de scikit-learn (perp_tol = 0.1 en unidades de perplejidad, ~2 000) casi nunca se
+  alcanzaba. Con 50 iteraciones los temas ya coinciden con los de 100 (coseno medio 0.998).
 - doc_prior / word_prior: priors de Dirichlet α y η; None = 1/K (el valor por defecto de scikit-learn).
 """
 from __future__ import annotations
+
+import json
+import pickle
 
 import numpy as np
 import pandas as pd
@@ -18,27 +23,44 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 from .text import Corpus, topic_diversity
 
-LDA_DEFAULTS = dict(method="batch", max_iter=100, tol=0.1, doc_prior=None, word_prior=None)
+LDA_DEFAULTS = dict(method="batch", max_iter=100, tol=0.001, doc_prior=None, word_prior=None)
+EVALUATE_EVERY = 10
 
 
-def lda_params(k, method="batch", max_iter=100, tol=0.1, doc_prior=None, word_prior=None, **_):
+class _RelTolLDA(LatentDirichletAllocation):
+    """LDA de scikit-learn con criterio de convergencia relativo: cada vez que se evalúa la perplejidad se
+    actualiza perp_tol = rel_tol × perplejidad, de modo que el corte |Δ| < perp_tol equivale a |Δ|/P < rel_tol."""
+    _rel_tol = None
+
+    def _perplexity_precomp_distr(self, X, doc_topic_distr=None, sub_sampling=False):
+        p = super()._perplexity_precomp_distr(X, doc_topic_distr, sub_sampling)
+        if self._rel_tol:
+            self.perp_tol = float(self._rel_tol) * float(p)
+        return p
+
+
+def lda_params(k, method="batch", max_iter=100, tol=0.001, doc_prior=None, word_prior=None, **_):
     """Parámetros efectivos (con los priors resueltos a número) para registrarlos en la configuración."""
     return {"learning_method": method, "max_iter": int(max_iter),
-            "perp_tol": float(tol) if method == "batch" else None,
+            "relative_tol": float(tol) if method == "batch" and tol else None,
+            "evaluate_every": EVALUATE_EVERY if method == "batch" else None,
             "doc_topic_prior": float(doc_prior) if doc_prior else 1.0 / k,
             "topic_word_prior": float(word_prior) if word_prior else 1.0 / k}
 
 
-def fit_lda(X, k, seed=42, max_iter=100, method="batch", tol=0.1, doc_prior=None, word_prior=None):
+def fit_lda(X, k, seed=42, max_iter=100, method="batch", tol=0.001, doc_prior=None, word_prior=None):
     p = lda_params(k, method, max_iter, tol, doc_prior, word_prior)
     kw = dict(n_components=k, learning_method=p["learning_method"], max_iter=p["max_iter"],
               doc_topic_prior=p["doc_topic_prior"], topic_word_prior=p["topic_word_prior"],
               random_state=seed, n_jobs=None)
-    if method == "batch":
-        kw.update(evaluate_every=10, perp_tol=p["perp_tol"])
+    if method == "batch" and p["relative_tol"]:
+        kw.update(evaluate_every=EVALUATE_EVERY, perp_tol=0.0)
+        m = _RelTolLDA(**kw)
+        m._rel_tol = p["relative_tol"]
     else:
-        kw.update(batch_size=256, learning_offset=10.0, evaluate_every=-1)
-    m = LatentDirichletAllocation(**kw)
+        if method != "batch":
+            kw.update(batch_size=256, learning_offset=10.0, evaluate_every=-1)
+        m = LatentDirichletAllocation(**kw)
     theta = m.fit_transform(X)
     beta = m.components_ / m.components_.sum(axis=1, keepdims=True)
     return m, theta, beta
@@ -85,9 +107,95 @@ METRICS = ["CaoJuan2009", "Arun2010", "Deveaud2014", "NPMI", "Stability (Greene 
 MINIMIZE = {"CaoJuan2009", "Arun2010"}
 
 
-def _fit_metrics(job):
-    """Un ajuste (K, semilla) -> métricas. Función de nivel de módulo para poder paralelizarla."""
-    X, corpus, doc_len, k, seed, params = job
+# ------------------------------------------------------------------ trabajos paralelizables
+# Cada ajuste es independiente y tiene su propia semilla, así que el resultado no depende de cuántos procesos se
+# usen ni del orden en que terminen. Los trabajos llevan una versión ligera del corpus (solo lo que necesitan
+# LDA y NPMI) para que enviarlos a otro proceso (script local) o a otro worker del navegador sea barato.
+LITE_FIELDS = ("X", "vocab", "Xbin", "doc_freq", "word_index")
+
+
+def corpus_lite(corpus):
+    if getattr(corpus, "_is_lite", False):
+        return corpus
+    lite = Corpus.__new__(Corpus)
+    for f in LITE_FIELDS:
+        setattr(lite, f, getattr(corpus, f))
+    lite._is_lite = True
+    return lite
+
+
+def corpus_payload(corpus) -> bytes:
+    return pickle.dumps({f: getattr(corpus, f) for f in LITE_FIELDS}, protocol=4)
+
+
+def corpus_from_payload(b) -> Corpus:
+    lite = Corpus.__new__(Corpus)
+    lite.__dict__.update(pickle.loads(bytes(b)))
+    lite._is_lite = True
+    return lite
+
+
+def _lda_job(job):
+    """job = (tipo, corpus, k, semilla, params); tipo: «metrics» (selección de K), «beta» (réplica de
+    estabilidad) o «full» (modelo final: modelo, theta, beta)."""
+    kind, corpus, k, seed, params = job
+    if kind == "metrics":
+        return _fit_metrics(corpus, k, seed, params)
+    m, theta, beta = fit_lda(corpus.X, k, seed, **params)
+    if kind == "beta":
+        return beta
+    return m, theta, beta
+
+
+def run_job_spec(corpus, spec: dict) -> bytes:
+    """Ejecuta un trabajo descrito en JSON (worker auxiliar del navegador) y devuelve el resultado serializado."""
+    return pickle.dumps(_lda_job((spec["kind"], corpus, int(spec["k"]), int(spec["seed"]), spec["params"])),
+                        protocol=4)
+
+
+class NeedJobs(Exception):
+    def __init__(self, specs):
+        super().__init__(f"{len(specs)} ajustes pendientes")
+        self.specs = specs
+
+
+class JobBroker:
+    """«Ejecutor» para el navegador: en lugar de ajustar, pide los ajustes que faltan (NeedJobs) para que el
+    navegador los reparta entre varios workers; con los resultados guardados, la misma llamada se repite y
+    continúa. Los resultados son idénticos a los de la ejecución en serie."""
+
+    def __init__(self):
+        self.cache = {}
+
+    @staticmethod
+    def spec(job):
+        kind, _, k, seed, params = job
+        return {"kind": kind, "k": int(k), "seed": int(seed), "params": params}
+
+    @staticmethod
+    def key(spec):
+        return json.dumps(spec, sort_keys=True)
+
+    def map(self, fn, jobs):
+        specs = [self.spec(j) for j in jobs]
+        keys = [self.key(s) for s in specs]
+        missing, seen = [], set()
+        for s, k in zip(specs, keys):
+            if k not in self.cache and k not in seen:
+                missing.append(s)
+                seen.add(k)
+        if missing:
+            raise NeedJobs(missing)
+        return iter([self.cache[k] for k in keys])
+
+    def put(self, spec_json: str, result: bytes):
+        self.cache[self.key(json.loads(spec_json))] = pickle.loads(bytes(result))
+
+
+def _fit_metrics(corpus, k, seed, params):
+    """Un ajuste (K, semilla) -> métricas."""
+    X = corpus.X
+    doc_len = np.asarray(X.sum(axis=1)).ravel()
     m, theta, beta = fit_lda(X, k, seed, **params)
     tw = top_words(beta, corpus.vocab, 10)
     return {"K": k, "seed": seed, "NPMI": float(np.nanmean(corpus.npmi(tw))),
@@ -97,10 +205,10 @@ def _fit_metrics(job):
 
 
 def _evaluate(corpus, ks, seeds, params, progress, done, total, executor=None):
-    doc_len = np.asarray(corpus.X.sum(axis=1)).ravel()
-    jobs = [(corpus.X, corpus, doc_len, k, s, params) for k in ks for s in seeds]
+    lite = corpus_lite(corpus)
+    jobs = [("metrics", lite, k, s, params) for k in ks for s in seeds]
     results = []
-    it = executor.map(_fit_metrics, jobs) if executor is not None else map(_fit_metrics, jobs)
+    it = executor.map(_lda_job, jobs) if executor is not None else map(_lda_job, jobs)
     for r in it:
         results.append(r)
         done[0] += 1
@@ -171,11 +279,6 @@ def match_topics(A, B):
     return r, c, s
 
 
-def _beta_job(job):
-    X, k, s, params = job
-    return fit_lda(X, k, seed=s, **params)[2]
-
-
 def stability(corpus: Corpus, k, beta_ref, seeds=(1, 2, 3, 4), params=None, executor=None, progress=None,
               max_iter=None):
     """Para cada réplica (otra semilla), coseno de cada tema de referencia con su par húngaro.
@@ -183,14 +286,19 @@ def stability(corpus: Corpus, k, beta_ref, seeds=(1, 2, 3, 4), params=None, exec
     params = {**LDA_DEFAULTS, **(params or {})}
     if max_iter is not None:
         params["max_iter"] = max_iter
-    sims = np.zeros((len(seeds), k))
-    jobs = [(corpus.X, k, s, params) for s in seeds]
-    betas = executor.map(_beta_job, jobs) if executor is not None else map(_beta_job, jobs)
+    lite = corpus_lite(corpus)
+    jobs = [("beta", lite, k, s, params) for s in seeds]
+    betas = executor.map(_lda_job, jobs) if executor is not None else map(_lda_job, jobs)
+    return _stab_matrix(beta_ref, betas, k, len(seeds), progress)
+
+
+def _stab_matrix(beta_ref, betas, k, n, progress=None):
+    sims = np.zeros((n, k))
     for i, b in enumerate(betas):
         r, c, S = match_topics(beta_ref, b)
         sims[i, r] = S[r, c]
         if progress:
-            progress((i + 1) / len(seeds), f"Estabilidad LDA: réplica {i + 1}/{len(seeds)}")
+            progress((i + 1) / n, f"Estabilidad LDA: réplica {i + 1}/{n}")
     return sims
 
 
@@ -203,7 +311,16 @@ class LDAResult:
         self.k = k
         self.seed = seed
         self.params = lda_params(k, **params)
-        self.model, self.theta, self.beta = fit_lda(corpus.X, k, seed, **params)
+        self.stab_seeds = list(range(seed + 1, seed + 1 + n_stab)) if n_stab else []
+        stab_betas = None
+        if executor is not None:  # modelo final y réplicas a la vez (en paralelo)
+            lite = corpus_lite(corpus)
+            jobs = [("full", lite, k, seed, params)] + [("beta", lite, k, s, params) for s in self.stab_seeds]
+            res = list(executor.map(_lda_job, jobs))
+            self.model, self.theta, self.beta = res[0]
+            stab_betas = res[1:]
+        else:
+            self.model, self.theta, self.beta = fit_lda(corpus.X, k, seed, **params)
         self.n_iter = int(self.model.n_iter_)
         self.top10 = top_words(self.beta, corpus.vocab, 10)
         self.top25 = top_words(self.beta, corpus.vocab, 25)
@@ -212,10 +329,12 @@ class LDAResult:
         self.diversity = topic_diversity(self.top25)
         self.dominant = self.theta.argmax(axis=1)
         self.prevalence = self.theta.mean(axis=0)
-        self.stab_seeds = list(range(seed + 1, seed + 1 + n_stab)) if n_stab else []
         if n_stab:
-            self.stab_reps = stability(corpus, k, self.beta, seeds=tuple(self.stab_seeds), params=params,
-                                       executor=executor, progress=progress)
+            if stab_betas is not None:
+                self.stab_reps = _stab_matrix(self.beta, stab_betas, k, n_stab, progress)
+            else:
+                self.stab_reps = stability(corpus, k, self.beta, seeds=tuple(self.stab_seeds), params=params,
+                                           progress=progress)
             self.stab = self.stab_reps.mean(axis=0)
             self.stab_sd = self.stab_reps.std(axis=0, ddof=1) if n_stab > 1 else np.full(k, np.nan)
         else:

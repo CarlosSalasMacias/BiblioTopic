@@ -132,10 +132,124 @@ async function umap(rows, nComponents, minDist, seed, label, opts = {}) {
   return Float32Array.from(u.getEmbedding().flat());
 }
 
+// ------------------------------------------------- LDA en paralelo (workers auxiliares)
+function pyBytes(proxy) {
+  const buf = proxy.getBuffer("u8");
+  try { return buf.data.slice(); } finally { buf.release(); proxy.destroy(); }
+}
+
+class LdaPool {
+  constructor(n) { this.n = n; this.workers = []; this.idle = []; this.queue = []; this.pending = new Map(); this.seq = 0; }
+
+  async start() {
+    const base = new URL("../bibliotopic/", import.meta.url).href;
+    const boot = (w) => new Promise((res, rej) => {
+      w.onmessage = (e) => (e.data.type === "ready" ? res(w) : rej(new Error(e.data.error)));
+      w.onerror = (e) => rej(e);
+      w.postMessage({ type: "init", base });
+    });
+    const tries = [];
+    for (let i = 0; i < this.n; i++) {
+      tries.push(boot(new Worker(new URL("./lda_worker.js?v=20261118", import.meta.url), { type: "module" })));
+    }
+    const res = await Promise.allSettled(tries);
+    this.workers = res.filter((r) => r.status === "fulfilled").map((r) => r.value);
+    if (!this.workers.length) throw new Error("no se pudo iniciar ningún worker auxiliar");
+    for (const w of this.workers) {
+      w.onmessage = (e) => this._done(w, e.data);
+      w.onerror = (e) => this._crash(w, e);
+    }
+    return this.workers.length;
+  }
+
+  async setCorpus(payload) {
+    await Promise.all(this.workers.map((w) => new Promise((res, rej) => {
+      w.onmessage = (e) => (e.data.type === "corpus-ok" ? res() : rej(new Error(e.data.error)));
+      w.postMessage({ type: "corpus", payload });
+    })));
+    for (const w of this.workers) w.onmessage = (e) => this._done(w, e.data);
+    this.idle = [...this.workers];
+  }
+
+  run(spec) {
+    return new Promise((resolve, reject) => { this.queue.push({ spec, resolve, reject }); this._pump(); });
+  }
+
+  _pump() {
+    while (this.idle.length && this.queue.length) {
+      const w = this.idle.pop();
+      const job = this.queue.shift();
+      const id = ++this.seq;
+      this.pending.set(w, { id, ...job });
+      w.postMessage({ type: "job", id, spec: job.spec });
+    }
+    if (!this.workers.length) for (const j of this.queue.splice(0)) j.reject(new Error("sin workers"));
+  }
+
+  _done(w, msg) {
+    const job = this.pending.get(w);
+    if (!job) return;
+    this.pending.delete(w);
+    this.idle.push(w);
+    if (msg.type === "result") job.resolve(msg.bytes); else job.reject(new Error(msg.error));
+    this._pump();
+  }
+
+  _crash(w, e) {  // p. ej., memoria insuficiente: se retira el worker y su ajuste se repite en el principal
+    const job = this.pending.get(w);
+    this.pending.delete(w);
+    this.workers = this.workers.filter((x) => x !== w);
+    this.idle = this.idle.filter((x) => x !== w);
+    try { w.terminate(); } catch (_) { /* nada */ }
+    if (job) job.reject(new Error(e && e.message || "worker auxiliar detenido"));
+    this._pump();
+  }
+
+  terminate() { for (const w of this.workers) w.terminate(); this.workers = []; this.idle = []; }
+}
+
+async function runLdaParallel(pool, nUsed) {
+  const payload = pyBytes(await py.runPythonAsync("S.lda_parallel_begin()"));
+  await pool.setCorpus(payload);
+  const planned = Number(py.runPython("S.lda_planned_jobs()"));
+  let done = 0, local = 0;
+  for (;;) {
+    const step = JSON.parse(await py.runPythonAsync("json.dumps(S.lda_parallel_step(), default=str)"));
+    if (step.done) break;
+    await Promise.all(step.jobs.map(async (spec) => {
+      const sj = JSON.stringify(spec);
+      try {
+        const bytes = await pool.run(sj);
+        py.globals.set("_sj", sj);
+        py.globals.set("_rb", bytes);
+        py.runPython("S.lda_put(_sj, _rb.to_bytes()); del _rb");
+      } catch (err) {
+        local += 1;
+        py.globals.set("_sj", sj);
+        py.runPython("S.lda_run_local(_sj)");
+      }
+      done += 1;
+      const what = spec.kind === "metrics" ? `selección de K: K=${spec.k}, semilla ${spec.seed}`
+        : spec.kind === "full" ? `modelo final K=${spec.k}` : `estabilidad: semilla ${spec.seed}`;
+      progress(Math.min(done / Math.max(planned, done), 0.99), `LDA (${nUsed} procesos) · ${what} · ${done}/${Math.max(planned, done)}`);
+    }));
+  }
+  py.globals.set("_nw", nUsed);
+  py.globals.set("_nl", local);
+  py.runPython("S.cfg['n_workers_used'] = int(_nw); S.cfg['lda_jobs_run_locally'] = int(_nl)");
+}
+
 // ------------------------------------------------------------------ análisis
 async function run(cfg) {
   const t0 = Date.now();
   const stage = (s) => post("stage", { stage: s, elapsed: (Date.now() - t0) / 1000 });
+  const nw = Number(cfg.n_workers) || 1;
+  // los workers auxiliares arrancan mientras se preprocesa el texto
+  const poolP = cfg.analyses.includes("lda") && nw > 1
+    ? (async () => { const p = new LdaPool(nw); await p.start(); return p; })().catch((err) => {
+      post("warn", { msg: `No se pudieron iniciar los procesos en paralelo (${err.message || err}); LDA se ejecutará en un solo proceso.` });
+      return null;
+    }) : Promise.resolve(null);
   stage("Filtrando y preprocesando el texto");
   const prep = JSON.parse(await callPy(
     "json.dumps(S.prepare(json.loads(_cfg)), ensure_ascii=False, default=str)", { _cfg: JSON.stringify(cfg) }));
@@ -144,8 +258,16 @@ async function run(cfg) {
   const pyProgress = (p, m) => progress(p, m);
   if (on("lda")) {
     stage("LDA: selección de K y modelo final");
-    py.globals.set("_prog", pyProgress);
-    await py.runPythonAsync("S.run_lda(lambda p, m: _prog(p, m))");
+    const pool = await poolP;
+    if (pool) {
+      stage(`LDA: selección de K y modelo final (${pool.workers.length} procesos en paralelo)`);
+      try { await runLdaParallel(pool, pool.workers.length); } finally { pool.terminate(); }
+    } else {
+      py.globals.set("_prog", pyProgress);
+      await py.runPythonAsync("S.run_lda(lambda p, m: _prog(p, m)); S.cfg['n_workers_used'] = 1");
+    }
+  } else {
+    (await poolP)?.terminate();
   }
   if (on("bertopic")) {
     stage("BERTopic: embeddings de los documentos");

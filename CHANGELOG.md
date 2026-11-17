@@ -36,7 +36,7 @@ interfaz lo dice y propone ejecutar el script localmente en paralelo o explorar 
 | Estabilidad LDA | 3 semillas | **10 semillas**, media ± DE por tema y global | 3 |
 | Estabilidad BERTopic | 3 semillas de UMAP | **10 semillas de UMAP**, media ± DE | 3 |
 | Selección de K | 5–30 paso 5, 1 semilla, 4 métricas | **5–40 paso 5 + fina ±5 paso 1, 3 semillas por K, 5 métricas** (+ estabilidad de Greene et al., 2014); todas las curvas | 5–30 paso 5, 1 semilla |
-| LDA, inferencia | online, 20 iteraciones (10 en la selección) | **batch**, máx. **100** iteraciones con criterio de convergencia | online, 20 |
+| LDA, inferencia | online, 20 iteraciones (10 en la selección) | **batch**, máx. **100** iteraciones con criterio de convergencia relativo (cambio de la perplejidad < 0.1 % cada 10 iteraciones) | **batch**, máx. 30 |
 | Priors α, η | implícitos (1/K) | **explícitos, 1/K**, registrados | 1/K |
 | UMAP | 15 vecinos, 5 dim., min_dist 0, euclídea | 15 vecinos, 5 dim., min_dist 0, **coseno** | igual |
 | HDBSCAN `min_cluster_size` | máx(10, 0.5 % N) | **máx(15, 0.5 % N)**; `min_samples` registrado | igual |
@@ -45,17 +45,36 @@ interfaz lo dice y propone ejecutar el script localmente en paralelo o explorar 
 | Tendencias | OLS, p < 0.05 sin corrección | OLS **+ Mann-Kendall con pendiente de Sen**, **BH** sobre todos los temas; clasificación por la q de Mann-Kendall | igual |
 | Año en curso en tendencias | incluido | **excluido** | excluido |
 | Semillas | global | global **y todas las derivadas registradas** | igual |
+| Procesos en paralelo (LDA, navegador) | 1 | **automático**: núcleos − 1, hasta 6 (resultado idéntico al de 1 proceso) | igual |
 
-**Viabilidad en el navegador.** Medido en esta versión (scikit-learn 1.6, Pyodide 0.27): un ajuste LDA batch de
-100 iteraciones tarda ~45 s con 3 600 documentos en Python nativo y Pyodide es 2.0 veces más lento; UMAP en el
-navegador tarda ~1.3 s por cada 1 000 documentos. Con ~9 000 documentos, el perfil Publicación requiere unos 65
-ajustes de LDA (54 en la selección de K), es decir, **~4–5 h en el navegador**; BERTopic con 10 semillas de UMAP
-tarda ~10 min. Alternativa propuesta (sin rebajar valores): el script descargable ejecuta lo mismo en Python con
-`--nucleos N` (ajustes de LDA en paralelo): ~2.5 h con un núcleo, ~20–30 min con 8. El script puede descargarse
-antes de ejecutar el análisis, con la configuración elegida en la interfaz. Para corpus de hasta ~2 000
-documentos, el perfil Publicación es viable en el navegador (< 1 h). El criterio de convergencia de scikit-learn
-(`perp_tol`) rara vez se alcanza antes de 100 iteraciones en corpus grandes; se informan las iteraciones reales.
-SPECTER no está disponible en el navegador con transformers.js; puede usarse en el script local.
+**Viabilidad en el navegador.** Con ~9 000 documentos, la primera versión de este perfil necesitaba ~4–5 h en el
+navegador (unos 65 ajustes de LDA de 100 iteraciones en un solo proceso). Se redujo sin rebajar ningún valor:
+
+1. **Criterio de convergencia relativo.** El criterio de scikit-learn es absoluto (`perp_tol` = 0.1 unidades de
+   perplejidad, con perplejidades de ~2 000) y nunca se alcanzaba: todos los ajustes llegaban a 100 iteraciones.
+   Ahora el ajuste se detiene cuando la perplejidad, evaluada cada 10 iteraciones, cambia menos del 0.1 %. En el
+   corpus de prueba (3 587 documentos, K = 5–40) se detuvo entre 49 y 99 iteraciones (media ~70) y los temas
+   coinciden con los de 100 iteraciones (coseno medio ≥ 0.9995, mínimo ≥ 0.997). Las iteraciones reales se
+   informan en Métodos.
+2. **LDA en paralelo en el navegador.** Los ajustes (selección de K, modelo final y réplicas de estabilidad) se
+   reparten entre varios workers de Pyodide; cada ajuste conserva su semilla, así que el resultado es idéntico al
+   de un solo proceso (comprobado con pruebas automáticas y en el navegador). Por defecto se usan los núcleos
+   lógicos menos uno, hasta 6 (cada worker ocupa ~300 MB; 2 como máximo con ≤ 4 GB de RAM); puede cambiarse en
+   «Procesos en paralelo». Si un worker no puede iniciarse o falla, su ajuste se repite en el principal.
+
+Medición en el navegador con el corpus real (9 250 documentos, 6 ajustes de LDA): 9.5 min en un solo proceso
+frente a 2.5 min con 3 procesos (3.9 veces más rápido). La medición mostró además que la estimación anterior para
+un solo proceso era optimista (el worker principal es 3.5 veces más lento que Python nativo, no 2): con un solo
+proceso, este perfil habría tardado ~6 h. Estimación corregida con ~9 250 documentos: **~1 h 50 min con 3
+procesos, ~1 h 15 min con 5 y ~1 h con 6 o más** (incluidos ~10 min de BERTopic con 10 semillas de UMAP). Para ir más rápido sin cambiar los valores, el script
+descargable ejecuta lo mismo con `--nucleos N`. SPECTER no está disponible en el navegador con transformers.js;
+puede usarse en el script local.
+
+**Aviso sobre la versión 1 y el perfil rápido anterior.** Al medir se comprobó que LDA *online* con 20
+iteraciones (el valor de la versión 1) no converge en corpus de este tamaño: sus temas se parecen poco a los del
+modelo convergido (coseno medio 0.44–0.55) y su NPMI es mucho menor (0.03–0.05 frente a 0.11–0.15). Por eso el
+perfil «Exploración rápida» usa ahora batch con 30 iteraciones (coseno 0.99 con el modelo convergido) y conviene
+repetir con la versión 2 los análisis hechos con la versión 1.
 
 ### 3. Comparación LDA–BERTopic y TRI
 

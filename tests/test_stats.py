@@ -112,3 +112,42 @@ def test_bca_interval_contains_point():
     boots = rng.normal(0.5, 0.05, 1000)
     lo, hi = ci_from_boot(boots, 0.52, "bca", jack=rng.normal(0.52, 0.01, 50))
     assert lo < 0.52 < hi
+
+
+def test_parallel_lda_broker_identical_to_serial():
+    """Los ajustes repartidos entre workers (JobBroker) dan exactamente el mismo resultado que en serie."""
+    import json
+    import pandas as pd
+    from bibliotopic import lda_model as L
+    from bibliotopic.text import Corpus
+    rng = np.random.default_rng(0)
+    topics = [["coffee", "rust", "fungus", "leaf", "spore", "hemileia"],
+              ["soil", "nitrogen", "fertilizer", "yield", "compost", "organic"],
+              ["shade", "tree", "bird", "biodiversity", "agroforestry", "canopy"]]
+    docs = [{"TI": " ".join(rng.choice(topics[i % 3], 4)), "AB": " ".join(rng.choice(topics[i % 3], 40)),
+             "PY": 2000 + i % 20} for i in range(150)]
+    C = Corpus(pd.DataFrame(docs))
+    params = dict(L.LDA_DEFAULTS, max_iter=20)
+    t = L.select_k(C, [2, 3, 4], seed=42, n_seeds=2, fine_window=1, params=params)
+    R = L.LDAResult(C, 3, seed=42, n_stab=2, params=params)
+    B, lite = L.JobBroker(), L.corpus_from_payload(L.corpus_payload(C))
+    for _ in range(10):
+        try:
+            t2 = L.select_k(C, [2, 3, 4], seed=42, n_seeds=2, fine_window=1, params=params, executor=B)
+            R2 = L.LDAResult(C, 3, seed=42, n_stab=2, params=params, executor=B)
+            break
+        except L.NeedJobs as e:
+            for s in e.specs:
+                B.put(json.dumps(s), L.run_job_spec(lite, s))
+    pd.testing.assert_frame_equal(t, t2)
+    assert np.allclose(R.beta, R2.beta) and np.allclose(R.stab_reps, R2.stab_reps)
+
+
+def test_relative_convergence_stops_early():
+    from bibliotopic import lda_model as L
+    from scipy import sparse
+    rng = np.random.default_rng(1)
+    X = sparse.csr_matrix(rng.poisson(0.3, size=(200, 80)))
+    m, _, _ = L.fit_lda(X, 4, seed=1, max_iter=200, tol=0.001)
+    assert m.n_iter_ < 200
+    assert L.lda_params(4)["relative_tol"] == 0.001

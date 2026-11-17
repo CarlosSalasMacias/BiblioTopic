@@ -151,5 +151,5 @@ def test_config_version_compatibility():
     assert new["profile"] == "publication" and new["n_boot"] == 1000 and new["lda_method"] == "batch"
     assert new["n_stab_lda"] == 10 and new["k_max"] == 40 and new["k_seeds"] == 3
     quick = pipeline.resolve_config({"config_version": 2, "profile": "quick"})
-    assert quick["lda_method"] == "online" and quick["n_boot"] == 200
+    assert quick["lda_method"] == "batch" and quick["lda_max_iter"] == 30 and quick["n_boot"] == 200
     assert pipeline.resolve_config({"config_version": 2, "n_boot": 99999})["n_boot"] == 5000
