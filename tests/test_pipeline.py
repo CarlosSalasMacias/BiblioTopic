@@ -90,3 +90,17 @@ def test_tri_expert_validation_in_report(session, tmp_path, monkeypatch):
         assert "Magsarjav" in txt and "Velden" in txt
     finally:
         S.validation = old
+
+
+def test_title_topic_ignores_not_terms(session):
+    """El tema de los títulos propuestos nunca es un término excluido con NOT en la ecuación de búsqueda."""
+    from bibliotopic.report import _topic_phrase
+    S, _, _ = session
+    old = dict(S.cfg)
+    try:
+        S.cfg.update(query_terms=[], search_scopus='TITLE-ABS-KEY ( coffee ) AND NOT TITLE-ABS-KEY ( "coffee shop*" )',
+                     search_wos="")
+        t = _topic_phrase(S, {"query": 'Scopus: TITLE-ABS-KEY ( coffee ) AND NOT TITLE-ABS-KEY ( "coffee shop*" )'})
+        assert "shop" not in t and t == "coffee"
+    finally:
+        S.cfg.clear(); S.cfg.update(old)

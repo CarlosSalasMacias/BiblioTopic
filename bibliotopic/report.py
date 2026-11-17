@@ -413,7 +413,7 @@ def build(R, path, meta, sections=None):
     C, info, ap = X.get("C"), X["info"], X["ap"]
     ms = R.merge_stats
     stab_on = R.on("stability")
-    topic = meta.get("topic_name") or "[TOPIC]"
+    topic = (meta.get("topic_name") or "").strip() or _topic_phrase(R, meta)
     models = " and ".join(m for m, r in (("LDA", lda), ("BERTopic", bert)) if r is not None)
     title = meta.get("title") or propose_titles(R, meta)[0]
     W = Writer(title)
@@ -735,6 +735,8 @@ def build(R, path, meta, sections=None):
                 + ("Con estos elementos se propone un Índice de Robustez Temática (TRI) para cada par "
                    "emparejado: TRI = cos(LDA, BERTopic) × √(estabilidad LDA × estabilidad BERTopic), con un "
                    "intervalo de confianza del 95 % obtenido remuestreando las réplicas de estabilidad de cada modelo. "
+                   "Según nuestro conocimiento, no se ha propuesto antes un indicador que combine, para cada par de "
+                   "temas, la similitud entre dos modelos de naturaleza distinta y la estabilidad de cada tema. "
                    "El índice reúne dos criterios ya empleados por separado: la estabilidad de los temas frente a la "
                    f"reinicialización aleatoria {cite('greene', 'belford18', 'hosseiny23')} y la comparación de las "
                    "soluciones de métodos distintos aplicados a los mismos datos, sin una verdad de referencia, "
@@ -1296,12 +1298,19 @@ def _topic_phrase(R, meta):
     t = (meta.get("topic_name") or "").strip()
     if t:
         return t
-    q = meta.get("query") or ""
-    phrases = [p.strip() for p in re.findall(r'"([^"]{3,60})"', q) if p.strip()]
-    if phrases:
-        return phrases[0]
-    terms = [w for w in (R.cfg.get("query_terms") or []) if w.strip()]
+    # términos de búsqueda SIN los excluidos con NOT (mismo criterio que extract_query_terms); se elige el que
+    # aparece en más documentos del corpus. Antes se tomaba la primera frase entre comillas de la ecuación, que
+    # podía ser un término excluido (p. ej., NOT "coffee shop*").
+    from . import io as bio
+    terms = [w for w in (R.cfg.get("query_terms") or []) if str(w).strip()]
+    if not terms:
+        terms = bio.extract_query_terms(R.cfg.get("search_scopus", ""), R.cfg.get("search_wos", ""))
     if terms:
+        df = getattr(R, "df", None)
+        if df is not None and len(df):
+            txt = (df["TI"].fillna("") + " " + df["AB"].fillna("")).str.lower()
+            counts = {t: int(txt.str.contains(r"\b" + re.escape(str(t).lower()), regex=True).sum()) for t in terms}
+            return max(terms, key=lambda t: (counts[t], -terms.index(t)))
         return terms[0]
     kw = R.tables.get("T5_keywords")
     if kw is not None and len(kw):
