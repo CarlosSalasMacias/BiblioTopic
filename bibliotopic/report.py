@@ -33,6 +33,7 @@ REFS = {
     "mcinnes17": "McInnes, L., Healy, J., & Astels, S. (2017). hdbscan: Hierarchical density based clustering. Journal of Open Source Software, 2(11), 205.",
     "mcinnes18": "McInnes, L., Healy, J., & Melville, J. (2018). UMAP: Uniform manifold approximation and projection for dimension reduction. arXiv:1802.03426.",
     "mimno": "Mimno, D., Wallach, H. M., Talley, E., Leenders, M., & McCallum, A. (2011). Optimizing semantic coherence in topic models. Proceedings of EMNLP 2011, 262–272.",
+    "bibliotopic": "Salas-Macías, C. A., & Montes-Escobar, K. (2026). BiblioTopic: Browser-based bibliometrics and comparative topic modelling (LDA and BERTopic) for Web of Science and Scopus corpora (Version {version}) [Computer software]. Zenodo. https://doi.org/[completar]",
     "montes23": "Montes-Escobar, K., De la Hoz-M, J., Barreiro-Linzán, M. D., Fonseca-Restrepo, C., Lapo-Palacios, M. Á., Verduga-Alcívar, D. A., & Salas-Macias, C. A. (2023). Trends in agroforestry research from 1993 to 2022: A topic model using latent Dirichlet allocation and HJ-Biplot. Mathematics, 11(10), 2250. https://doi.org/10.3390/math11102250",
     "abril24": "Abril-Espin, E., Montes-Escobar, K., de la Hoz-M, J., Garcés-Fiallos, F. R., & Salas-Macias, C. A. (2024). Exploring global trends in scientific research on Rubus glaucus Benth.: A comprehensive analysis integrating bibliometrics, LDA, and HJ-Biplot. Journal of Berry Research, 14(4), 287–300. https://doi.org/10.1177/18785093241284955",
     "salas26": "Salas-Macías, C. A., Montes-Escobar, K., Zamora-Ledezma, E., Fonseca-Restrepo, C., & de la Hoz-M, J. (2026). The knowledge architecture of carbon markets: A 30-year global view. Social Sciences & Humanities Open, 13, 102827.",
@@ -267,7 +268,7 @@ CITE_NAMES = {
     "griffiths": "Griffiths y Steyvers, 2004", "grootendorst": "Grootendorst, 2022",
     "hoffman": "Hoffman et al., 2010", "hubert": "Hubert y Arabie, 1985", "kuhn": "Kuhn, 1955",
     "lotka": "Lotka, 1926", "mcinnes18": "McInnes et al., 2018", "mimno": "Mimno et al., 2011",
-    "montes23": "Montes-Escobar et al., 2023", "abril24": "Abril-Espin et al., 2024",
+    "bibliotopic": "Salas-Macías & Montes-Escobar, 2026", "montes23": "Montes-Escobar et al., 2023", "abril24": "Abril-Espin et al., 2024",
     "salas26": "Salas-Macías et al., 2026", "montes26": "Montes-Escobar et al., 2026",
     "page": "Page et al., 2021", "pedregosa": "Pedregosa et al., 2011",
     "reimers": "Reimers y Gurevych, 2019", "strehl": "Strehl y Ghosh, 2002",
@@ -814,7 +815,7 @@ def build(R, path, meta, sections=None):
         v = R.versions
         from .pipeline import __version__ as _ver
         seeds = R.seed_registry() if hasattr(R, "seed_registry") else {"global": cfg["seed"]}
-        W.p(f"Todos los análisis se realizaron con BiblioTopic {_ver} (perfil «"
+        W.p(f"Todos los análisis se realizaron con BiblioTopic {_ver} {cite('bibliotopic')} (perfil «"
             + {"publication": "Publicación", "quick": "Exploración rápida"}.get(cfg.get("profile"), str(cfg.get("profile")))
             + f"»), que ejecuta Python {v.get('python')} en el navegador (Pyodide) con pandas {v.get('pandas')}, "
             f"scikit-learn {v.get('scikit-learn')}, SciPy {v.get('scipy')}, networkx {v.get('networkx')} y matplotlib "
@@ -1187,7 +1188,8 @@ def build(R, path, meta, sections=None):
     if "references" in sections and used:
         W.h("Referencias (métodos)", 1)
         for k in sorted(used, key=lambda x: REFS[x]):
-            p = W.doc.add_paragraph(REFS[k])
+            from .pipeline import __version__ as _bt_ver
+            p = W.doc.add_paragraph(REFS[k].replace("{version}", _bt_ver))
             p.paragraph_format.left_indent = Cm(0.75)
             p.paragraph_format.first_line_indent = Cm(-0.75)
     if corpus_refs:

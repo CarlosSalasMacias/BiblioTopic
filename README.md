@@ -153,13 +153,20 @@ python analisis_bibliotopic.py --nucleos 8
 
 ## Cómo citar
 
-Si usa BiblioTopic, cítelo con el DOI de Zenodo (ver «Cite this repository» en GitHub o el archivo
-`CITATION.cff`).
+Si usa BiblioTopic, cite la versión que utilizó con su DOI de Zenodo (ver «Cite this repository» en GitHub o el
+archivo `CITATION.cff`):
+
+> Salas-Macías, C. A., & Montes-Escobar, K. (2026). *BiblioTopic: Browser-based bibliometrics and comparative
+> topic modelling (LDA and BERTopic) for Web of Science and Scopus corpora* (Versión 2.0.0) [Software]. Zenodo.
+> https://doi.org/10.5281/zenodo.XXXXXXX
+
+**Autores:** Carlos Alfredo Salas-Macías ([ORCID 0000-0002-1641-1571](https://orcid.org/0000-0002-1641-1571)) y
+Karime Montes-Escobar ([ORCID 0000-0002-9555-0392](https://orcid.org/0000-0002-9555-0392)).
 
 ### Publicar una versión con DOI en Zenodo
 
 1. En https://zenodo.org/account/settings/github/ active el repositorio `CarlosSalasMacias/BiblioTopic`.
-2. En GitHub cree una *release* (por ejemplo `v1.0.0`) desde *Releases → Draft a new release*.
+2. En GitHub cree una *release* (por ejemplo `v2.0.0`) desde *Releases → Draft a new release*.
 3. Zenodo archiva la versión y asigna un DOI; añada ese DOI a este README y al texto de disponibilidad.
 
 ## Estructura

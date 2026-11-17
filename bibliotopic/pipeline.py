@@ -1041,6 +1041,8 @@ class Session:
             "bibliotopic_version": __version__,
             "generated": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
             "generator": "BiblioTopic (https://github.com/CarlosSalasMacias/BiblioTopic)",
+            "software_citation": ("Salas-Macías, C. A., & Montes-Escobar, K. (2026). BiblioTopic (Version "
+                                  f"{__version__}) [Computer software]. Zenodo."),
             "profile": c.get("profile"),
             "input_files": files,
             "input_files_detail": getattr(self, "input_meta", None) or [{"file": f} for f in files],
