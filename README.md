@@ -160,8 +160,12 @@ archivo `CITATION.cff`):
 > topic modelling (LDA and BERTopic) for Web of Science and Scopus corpora* (Versión 2.0.0) [Software]. Zenodo.
 > https://doi.org/10.5281/zenodo.XXXXXXX
 
-**Autores:** Carlos Alfredo Salas-Macías ([ORCID 0000-0002-1641-1571](https://orcid.org/0000-0002-1641-1571)) y
-Karime Montes-Escobar ([ORCID 0000-0002-9555-0392](https://orcid.org/0000-0002-9555-0392)).
+**Autores:** Carlos Alfredo Salas-Macías¹ ² ([ORCID 0000-0002-1641-1571](https://orcid.org/0000-0002-1641-1571)) y
+Karime Montes-Escobar² ³ ([ORCID 0000-0002-9555-0392](https://orcid.org/0000-0002-9555-0392)).
+
+¹ Laboratorio Funcionamiento de Agroecosistemas y Cambio Climático-FAGROCLIM, Departamento de Ciencias Agronómicas, Facultad de Ingenierías Agroambientales, Universidad Técnica de Manabí, Lodana 130401, Manabí, Ecuador.
+² Centro de Investigación y Desarrollo en Ciencias de la Ingeniería-CIDCI, Escuela de Ciencias Digitales y Tecnologías Avanzadas, Facultad de Ingeniería, Ciencia y Tecnología, Universidad Bernardo O’Higgins, Santiago 8370993, Chile.
+³ Laboratorio Funcionamiento de Agroecosistemas y Cambio Climático-FAGROCLIM, Departamento de Ciencias Agrícolas, Facultad de Ingeniería Agrícola, Universidad Técnica de Manabí, Lodana 130401, Manabí, Ecuador.
 
 ### Publicar una versión con DOI en Zenodo
 
