@@ -83,8 +83,8 @@ def test_tri_expert_validation_in_report(session, tmp_path, monkeypatch):
     try:
         S.render(str(tmp_path))
         assert "T12b_TRI_vs_experts" in S.tables
-        assert list(S.tables["T12b_TRI_vs_experts"]["Predictor"]) == ["TRI", "Cosine", "Mean stability",
-                                                                       "TRI − mean stability", "TRI − cosine"]
+        assert list(S.tables["T12b_TRI_vs_experts"]["Predictor"]) == ["TRI", "Cosine", "Pair stability (geometric mean)",
+                                                                       "TRI − pair stability (geometric mean)", "TRI − cosine"]
         report.build(S, str(tmp_path / "doc.docx"), {"topic_name": "coffee"}, None)
         txt = "\n".join(p.text for p in Document(str(tmp_path / "doc.docx")).paragraphs)
         assert "primera validación empírica del TRI" in txt and "correlación del TRI con la interpretabilidad" in txt
@@ -105,3 +105,34 @@ def test_title_topic_ignores_not_terms(session):
         assert "shop" not in t and t == "coffee"
     finally:
         S.cfg.clear(); S.cfg.update(old)
+
+
+def test_sensitivity_tables_and_agreement_breakdown(session):
+    S, _, _ = session
+    T = S.tables
+    ms = T["bert_mcs_sensitivity"]
+    assert ms["min_cluster_size"].iloc[0] == S.bert.min_cluster_size
+    assert {"Outlier documents (%)", "Mean NPMI", "NMI with LDA (clustered documents)"} <= set(ms.columns)
+    ag = dict(T["doc_agreement"].values)
+    parts = sum(ag[k] for k in ("Increasing in both", "No significant trend in both", "Decreasing in both",
+                                "Discordant"))
+    assert parts == ag["Trend pairs evaluated (convergent or partial matches)"]
+    assert "Cohen's kappa (trend classes)" in ag
+    assert "Best-match TRI" in T["topic_best_matches"]
+    bt = T["bert_trends"]
+    if "Trend (clustered only)" in bt:
+        assert "Sen slope (clustered only)" in bt
+
+
+def test_tables_numbered_by_first_citation(session):
+    import docx
+    import re
+    _, _, d = session
+    text = "\n".join(p.text for p in docx.Document(str(d / "doc.docx")).paragraphs)
+    res = text[text.index("3. Resultados"):]
+    nums = [int(m) for m in re.findall(r"Tabla (\d+)", res)]
+    first = list(dict.fromkeys(nums))
+    assert first == sorted(first)
+    fnums = [int(m) for m in re.findall(r"Figura (\d+)", res)]
+    ffirst = list(dict.fromkeys(fnums))
+    assert ffirst == sorted(ffirst)

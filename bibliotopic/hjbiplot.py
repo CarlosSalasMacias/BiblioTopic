@@ -45,22 +45,37 @@ class HJBiplot:
         return pd.DataFrame(Hn @ Hn.T, index=self.cols.index, columns=self.cols.index)
 
 
-def make_periods(years: pd.Series, width=5, min_share=0.05) -> pd.Series:
+def make_periods(years: pd.Series, width=5, min_share=0.05, first_min_docs=None) -> pd.Series:
     """Agrupa años en periodos de `width` años terminando en el último año;
-    los periodos iniciales con menos de `min_share` del corpus se fusionan."""
+    los periodos iniciales con menos de `min_share` del corpus se fusionan.
+    first_min_docs: si se indica, los periodos de ancho fijo empiezan en el primer año con al menos ese número de
+    documentos y todos los años anteriores forman un periodo inicial único."""
     y = years.astype(int)
     last = int(y.max())
     edges = []
     hi = last
-    while hi >= y.min():
+    start = int(y.min())
+    if first_min_docs:
+        vc = y.value_counts().sort_index()
+        ok = vc[vc >= int(first_min_docs)]
+        if len(ok) and int(ok.index[0]) > start:
+            start = int(ok.index[0])
+    while hi >= start:
         edges.append((hi - width + 1, hi))
         hi -= width
     edges = edges[::-1]
+    if edges and edges[0][0] < start:  # el periodo más antiguo de ancho fijo no baja del año de inicio
+        edges[0] = (start, edges[0][1])
+        if len(edges) > 1 and edges[0][1] - edges[0][0] + 1 < width:  # tramo incompleto: se une al siguiente
+            edges[1] = (edges[0][0], edges[1][1])
+            edges.pop(0)
     # fusionar los primeros periodos hasta alcanzar min_share
     n = len(y)
     while len(edges) > 1 and ((y >= edges[0][0]) & (y <= edges[0][1])).sum() < min_share * n:
         edges[1] = (edges[0][0], edges[1][1])
         edges.pop(0)
+    if start > int(y.min()):  # periodo inicial: todos los años anteriores al primer año con first_min_docs
+        edges.insert(0, (int(y.min()), start - 1))
     edges[0] = (int(y.min()), edges[0][1])
     labels = []
     for lo, hi in edges:
@@ -85,7 +100,7 @@ def _label_from_edges(y, edges):
     return y.map(lab), labels
 
 
-def make_periods_mode(years: pd.Series, mode="width", width=5, n_periods=5, custom=""):
+def make_periods_mode(years: pd.Series, mode="width", width=5, n_periods=5, custom="", first_min_docs=None):
     """Periodos para los análisis temporales.
     - "width": ancho fijo (make_periods; los primeros periodos con < 5 % del corpus se fusionan).
     - "quantile": n_periods periodos con un número similar de documentos (cortes en años completos).
@@ -115,7 +130,7 @@ def make_periods_mode(years: pd.Series, mode="width", width=5, n_periods=5, cust
         edges = [e for e in edges if e[0] <= e[1]]
         per, labels = _label_from_edges(y, edges)
     else:
-        per, labels = make_periods(years, width)
+        per, labels = make_periods(years, width, first_min_docs=first_min_docs)
     # aviso: primer periodo que agrupa muchos años con pocos documentos (p. ej., 1926-2001)
     spans = [int(l.split("-")[1]) - int(l.split("-")[0]) + 1 if "-" in l else 1 for l in labels]
     if len(spans) > 1:

@@ -235,3 +235,47 @@ def test_hamed_rao_and_agreement_jackknife_and_rematched_null():
     A, B = rng.random((5, 60)), rng.random((5, 60))
     nu = permutation_null_cosine(A, B, n_perm=200)
     assert nu["p95_rematched"] >= nu["p95_global"] and nu["p_rematched"].shape == (5, 5)
+
+
+def test_ref_key_particles_and_anonymous():
+    from bibliotopic.citations import ref_key
+    assert ref_key("De Souza J, 2013, PLANT DIS, V9") == "De Souza J, 2013"
+    assert ref_key("DE SOUZA J, 2013, PLANT DIS") == "De Souza J, 2013"
+    assert ref_key("De Souza, J., Smith, A., Title (2013) Plant Dis") == "De Souza J, 2013"
+    assert ref_key("Anonymous, 2014, FAOSTAT DATABASE") == "Anonymous [FAOSTAT DATABASE], 2014"
+    assert ref_key("Anonymous, 2014") is None
+
+
+def test_first_period_min_docs():
+    import pandas as pd
+    from bibliotopic.hjbiplot import make_periods_mode
+    y = pd.Series([1950, 1970, 1985] + [2000] * 12 + list(range(2001, 2021)) * 15)
+    per, labels, _ = make_periods_mode(y, "width", 5, first_min_docs=10)
+    assert labels[0] == "1950-1999" and labels[1].startswith("2000")
+
+
+def test_stability_subsample_deterministic():
+    from bibliotopic.lda_model import subsample_index
+    a, b = subsample_index(100, 0.8, 43), subsample_index(100, 0.8, 43)
+    assert len(a) == 80 and (a == b).all() and len(set(a)) == 80
+
+
+def test_trend_sensitivity_columns():
+    import numpy as np
+    from bibliotopic import compare
+    rng = np.random.default_rng(0)
+    years = np.repeat(np.arange(2000, 2020), 40)
+    theta = rng.dirichlet(np.ones(3), len(years))
+    theta[:, 0] += (years - 2000) * 0.01
+    main, _ = compare.topic_trends(theta, years, 10)
+    ts = compare.trend_sensitivity(theta, years, main, ["a", "b", "c"], 30)
+    assert ts["Trend (weighted by documents per year, WLS)"].iloc[0] == compare.HOT
+    assert ts.attrs["min_docs_alt"] == 30
+
+
+def test_broker_key_survives_js_roundtrip():
+    import json
+    from bibliotopic.lda_model import JobBroker
+    spec = {"kind": "beta", "k": 5, "seed": 43, "params": {"tol": 0.001, "stab_subsample": 0.0, "max_iter": 100.0}}
+    js = {"kind": "beta", "k": 5, "seed": 43, "params": {"tol": 0.001, "stab_subsample": 0, "max_iter": 100}}  # JS
+    assert JobBroker.key(spec) == JobBroker.key(js)

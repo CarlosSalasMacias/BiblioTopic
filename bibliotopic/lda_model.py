@@ -141,10 +141,22 @@ def _lda_job(job):
     kind, corpus, k, seed, params = job
     if kind == "metrics":
         return _fit_metrics(corpus, k, seed, params)
-    m, theta, beta = fit_lda(corpus.X, k, seed, **params)
+    params = dict(params)
+    frac = float(params.pop("stab_subsample", 0) or 0)
     if kind == "beta":
-        return beta
+        X = corpus.X
+        if 0 < frac < 1:  # réplica con un submuestreo de documentos (sin reemplazo), además de otra semilla
+            X = X[subsample_index(X.shape[0], frac, seed)]
+        return fit_lda(X, k, seed, **params)[2]
+    m, theta, beta = fit_lda(corpus.X, k, seed, **params)
     return m, theta, beta
+
+
+def subsample_index(n, frac, seed):
+    """Índices (ordenados) de un submuestreo sin reemplazo de round(frac·n) documentos; semilla derivada de la
+    de la réplica, igual en LDA y en BERTopic."""
+    rng = np.random.default_rng(int(seed) + 7919)
+    return np.sort(rng.choice(n, max(2, int(round(frac * n))), replace=False))
 
 
 def run_job_spec(corpus, spec: dict) -> bytes:
@@ -174,7 +186,16 @@ class JobBroker:
 
     @staticmethod
     def key(spec):
-        return json.dumps(spec, sort_keys=True)
+        # JavaScript serializa 0.0 como 0: los números enteros se normalizan para que la clave coincida
+        def norm(v):
+            if isinstance(v, dict):
+                return {k: norm(x) for k, x in v.items()}
+            if isinstance(v, list):
+                return [norm(x) for x in v]
+            if isinstance(v, float) and v.is_integer():
+                return int(v)
+            return v
+        return json.dumps(norm(spec), sort_keys=True)
 
     def map(self, fn, jobs):
         specs = [self.spec(j) for j in jobs]
@@ -280,14 +301,15 @@ def match_topics(A, B):
 
 
 def stability(corpus: Corpus, k, beta_ref, seeds=(1, 2, 3, 4), params=None, executor=None, progress=None,
-              max_iter=None):
+              max_iter=None, subsample=0.0):
     """Para cada réplica (otra semilla), coseno de cada tema de referencia con su par húngaro.
     Devuelve la matriz réplicas × temas (estabilidad por tema = media; se informa también la DE)."""
     params = {**LDA_DEFAULTS, **(params or {})}
     if max_iter is not None:
         params["max_iter"] = max_iter
     lite = corpus_lite(corpus)
-    jobs = [("beta", lite, k, s, params) for s in seeds]
+    bp = {**params, "stab_subsample": float(subsample)} if subsample else params
+    jobs = [("beta", lite, k, s, bp) for s in seeds]
     betas = executor.map(_lda_job, jobs) if executor is not None else map(_lda_job, jobs)
     return _stab_matrix(beta_ref, betas, k, len(seeds), progress)
 
@@ -304,7 +326,9 @@ def _stab_matrix(beta_ref, betas, k, n, progress=None):
 
 class LDAResult:
     def __init__(self, corpus: Corpus, k: int, seed=42, n_stab=10, params=None, executor=None, progress=None,
-                 max_iter=None):
+                 max_iter=None, stab_subsample=0.0):
+        """stab_subsample: fracción de documentos de cada réplica de estabilidad (0 = corpus completo, solo cambia
+        la semilla)."""
         params = {**LDA_DEFAULTS, **(params or {})}
         if max_iter is not None:  # compatibilidad con llamadas antiguas
             params["max_iter"] = max_iter
@@ -312,10 +336,12 @@ class LDAResult:
         self.seed = seed
         self.params = lda_params(k, **params)
         self.stab_seeds = list(range(seed + 1, seed + 1 + n_stab)) if n_stab else []
+        self.stab_subsample = float(stab_subsample or 0)
+        sp_ = {**params, "stab_subsample": self.stab_subsample} if self.stab_subsample else params
         stab_betas = None
         if executor is not None:  # modelo final y réplicas a la vez (en paralelo)
             lite = corpus_lite(corpus)
-            jobs = [("full", lite, k, seed, params)] + [("beta", lite, k, s, params) for s in self.stab_seeds]
+            jobs = [("full", lite, k, seed, params)] + [("beta", lite, k, s, sp_) for s in self.stab_seeds]
             res = list(executor.map(_lda_job, jobs))
             self.model, self.theta, self.beta = res[0]
             stab_betas = res[1:]
@@ -334,7 +360,7 @@ class LDAResult:
                 self.stab_reps = _stab_matrix(self.beta, stab_betas, k, n_stab, progress)
             else:
                 self.stab_reps = stability(corpus, k, self.beta, seeds=tuple(self.stab_seeds), params=params,
-                                           progress=progress)
+                                           progress=progress, subsample=self.stab_subsample)
             self.stab = self.stab_reps.mean(axis=0)
             self.stab_sd = self.stab_reps.std(axis=0, ddof=1) if n_stab > 1 else np.full(k, np.nan)
         else:

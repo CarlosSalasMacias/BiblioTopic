@@ -143,6 +143,66 @@ def topic_trends(theta, years, min_docs_year=10, exclude_years=(), alpha=0.05, t
     return out, m
 
 
+def _wls_trend(m, counts, alpha=0.05):
+    """Pendiente de la prevalencia media anual por mínimos cuadrados ponderados (peso = documentos del año), con
+    prueba t y BH: los años con pocos documentos (medias más ruidosas) pesan menos."""
+    x = m.index.values.astype(float)
+    w = counts.reindex(m.index).values.astype(float)
+    rows = []
+    for t in m.columns:
+        y = m[t].values
+        if len(x) < 3:
+            rows.append((np.nan, np.nan))
+            continue
+        W = np.sqrt(w)
+        A = np.c_[np.ones_like(x), x] * W[:, None]
+        coef, *_ = np.linalg.lstsq(A, y * W, rcond=None)
+        res = y * W - A @ coef
+        dof = len(x) - 2
+        s2 = float(res @ res) / dof if dof > 0 else np.nan
+        cov = s2 * np.linalg.pinv(A.T @ A)
+        se = np.sqrt(cov[1, 1]) if np.isfinite(cov[1, 1]) and cov[1, 1] > 0 else np.nan
+        p = float(2 * stats.t.sf(abs(coef[1] / se), dof)) if se and np.isfinite(se) else 1.0
+        rows.append((float(coef[1]), p))
+    out = pd.DataFrame(rows, columns=["slope", "p"])
+    out["q"] = bh_adjust(out["p"].fillna(1.0).values)
+    out["Trend"] = np.where(out["slope"].isna(), NOT_ESTIMABLE,
+                            np.where(out["q"] < alpha, np.where(out["slope"] > 0, HOT, COLD), NO_TREND))
+    return out
+
+
+def trend_sensitivity(theta, years, main, labels, min_docs_alt=30, exclude_years=(), alpha=0.05,
+                      test="mann_kendall_hr"):
+    """Sensibilidad de la clasificación de tendencias: (i) solo años con al menos min_docs_alt documentos y
+    (ii) regresión ponderada por el número de documentos de cada año (todos los años de la clasificación
+    principal). Devuelve una fila por tema y el resumen de cambios."""
+    alt, _ = topic_trends(theta, years, min_docs_alt, exclude_years, alpha=alpha, test=test)
+    if alt.attrs.get("min_docs_year", 0) <= main.attrs.get("min_docs_year", 0):
+        # no hay al menos 3 años con el mínimo más exigente: el análisis no sería más estricto que el principal
+        return None
+    df = pd.DataFrame(theta)
+    df["Y"] = np.asarray(years).astype(int)
+    if len(exclude_years):
+        df = df[~df["Y"].isin(list(exclude_years))]
+    counts = df["Y"].value_counts()
+    thr = int(main.attrs.get("min_docs_year", 1))
+    keep = counts[counts >= thr].index
+    m = df[df["Y"].isin(keep)].groupby("Y").mean().sort_index()
+    wls = _wls_trend(m, counts, alpha)
+    out = pd.DataFrame({
+        "Topic": labels, "Trend (main)": main["Trend"].values,
+        f"Trend (years with ≥ {alt.attrs.get('min_docs_year')} documents)": alt["Trend"].values,
+        "Sen slope (restricted years)": alt["Sen slope"].values,
+        "Years used (restricted)": alt.attrs.get("n_years"),
+        "Trend (weighted by documents per year, WLS)": wls["Trend"].values,
+        "WLS slope": wls["slope"].values, "WLS q-value (BH)": wls["q"].values,
+    })
+    out.attrs.update(min_docs_alt=alt.attrs.get("min_docs_year"), n_years_alt=alt.attrs.get("n_years"),
+                     changed_alt=int((out.iloc[:, 1] != out.iloc[:, 2]).sum()),
+                     changed_wls=int((out.iloc[:, 1] != out["Trend (weighted by documents per year, WLS)"]).sum()))
+    return out
+
+
 def _representative(lda, bert, titles):
     """Título del documento más representativo de cada tema: mayor proporción del tema (LDA) y mayor similitud
     c-TF-IDF entre los documentos agrupados en el tema (BERTopic)."""
@@ -159,6 +219,10 @@ def _representative(lda, bert, titles):
         best = idx[int(np.argmax(sim[idx]))] if sim is not None and len(idx) else (idx[0] if len(idx) else None)
         rb.append(titles[best] if best is not None else "")
     return rl, rb
+
+
+def _tri(cos, s1, s2):
+    return round(float(cos * np.sqrt(s1 * s2)), 3) if np.isfinite(s1) and np.isfinite(s2) else np.nan
 
 
 def compare(lda, bert, years, min_docs_year=10, tau_strong=0.5, tau_partial=0.3, exclude_years=(), titles=None,
@@ -224,6 +288,7 @@ def compare(lda, bert, years, min_docs_year=10, tau_strong=0.5, tau_partial=0.3,
         j = int(np.argmax(S.values[i]))
         best.append({"Model": "LDA", "Topic": lda.labels[i], "Best match": bert.labels[j],
                      "Best cosine": round(float(S.values[i, j]), 3),
+                     "Best-match TRI": _tri(S.values[i, j], lda.stab[i], bert.stab[j]),
                      "Hungarian partner": bert.labels[hung[i]] if i in hung else "-",
                      "Hungarian cosine": round(float(S.values[i, hung[i]]), 3) if i in hung else np.nan,
                      "Hungarian = best": "Yes" if hung.get(i) == j else "No"})
@@ -231,10 +296,14 @@ def compare(lda, bert, years, min_docs_year=10, tau_strong=0.5, tau_partial=0.3,
         i = int(np.argmax(S.values[:, j]))
         best.append({"Model": "BERTopic", "Topic": bert.labels[j], "Best match": lda.labels[i],
                      "Best cosine": round(float(S.values[i, j]), 3),
+                     "Best-match TRI": _tri(S.values[i, j], lda.stab[i], bert.stab[j]),
                      "Hungarian partner": lda.labels[hung_b[j]] if j in hung_b else "-",
                      "Hungarian cosine": round(float(S.values[hung_b[j], j]), 3) if j in hung_b else np.nan,
                      "Hungarian = best": "Yes" if hung_b.get(j) == i else "No"})
     best = pd.DataFrame(best)
+    # temas del otro modelo que comparten la misma mejor correspondencia (relación muchos a uno)
+    tgt = best.groupby(["Model", "Best match"])["Topic"].transform("count")
+    best["Topics sharing this best match"] = tgt.astype(int)
 
     # sensibilidad de la clasificación a los umbrales τ (decisiones del análisis)
     pc = np.array([S.values[i, j] for i, j in zip(r, c)])
@@ -252,13 +321,16 @@ def compare(lda, bert, years, min_docs_year=10, tau_strong=0.5, tau_partial=0.3,
     metrics = pd.DataFrame({
         "Metric": ["Number of topics", "Mean NPMI coherence", "Mean UMass coherence",
                    "Topic diversity (top-25)", "Mean topic stability (cosine across seeds)",
-                   "Outlier documents (%)", "Largest topic share (%)",
+                   "Outlier documents (%)", "Outliers reassigned (%)",
+                   "Low-confidence reassignments (%)", "Largest topic share (%)",
                    "Smallest topic share (%)", "Hot topics", "Cold topics"],
         "LDA": [lda.k, np.nanmean(lda.npmi), np.nanmean(lda.umass), lda.diversity,
-                np.nanmean(lda.stab), 0.0, 100 * lda.prevalence.max(), 100 * lda.prevalence.min(),
+                np.nanmean(lda.stab), 0.0, 0.0, 0.0, 100 * lda.prevalence.max(), 100 * lda.prevalence.min(),
                 int((tl["Trend"] == "Hot").sum()), int((tl["Trend"] == "Cold").sum())],
         "BERTopic": [bert.k, np.nanmean(bert.npmi), np.nanmean(bert.umass), bert.diversity,
-                     np.nanmean(bert.stab), 100 * bert.outlier_rate, 100 * bert.prevalence.max(),
+                     np.nanmean(bert.stab), 100 * bert.outlier_rate,
+                     100 * float(np.mean(getattr(bert, "reassigned", np.zeros(1)))),
+                     100 * float(np.mean(getattr(bert, "low_confidence", np.zeros(1)))), 100 * bert.prevalence.max(),
                      100 * bert.prevalence.min(), int((tb["Trend"] == "Hot").sum()),
                      int((tb["Trend"] == "Cold").sum())],
     })
@@ -280,6 +352,21 @@ def compare(lda, bert, years, min_docs_year=10, tau_strong=0.5, tau_partial=0.3,
     trend_agree = float((paired["Trend LDA"] == paired["Trend BERTopic"]).mean()) if len(paired) else np.nan
     agreement["Trend agreement in matched topics"] = trend_agree
     agreement = {k: round(float(v), 3) for k, v in agreement.items()}
+    # desglose de la concordancia de tendencias (pares convergentes o parciales con tendencia estimable)
+    a_, b_ = paired["Trend LDA"].values, paired["Trend BERTopic"].values
+    breakdown = {
+        "Trend pairs evaluated (convergent or partial matches)": int(len(paired)),
+        "Increasing in both": int(((a_ == HOT) & (b_ == HOT)).sum()),
+        "No significant trend in both": int(((a_ == NO_TREND) & (b_ == NO_TREND)).sum()),
+        "Decreasing in both": int(((a_ == COLD) & (b_ == COLD)).sum()),
+        "Discordant": int((a_ != b_).sum()),
+    }
+    kappa = np.nan
+    if len(paired) >= 2 and len(set(a_) | set(b_)) > 1:
+        from sklearn.metrics import cohen_kappa_score
+        kappa = float(cohen_kappa_score(a_, b_, labels=[HOT, NO_TREND, COLD]))
+    breakdown["Cohen's kappa (trend classes)"] = round(kappa, 3) if np.isfinite(kappa) else np.nan
+    agreement.update(breakdown)
 
     cont = pd.crosstab(pd.Series([lda.ids[x] for x in lda.dominant], name="LDA"),
                        pd.Series([bert.ids[x] if x >= 0 else "Unassigned" for x in bert.topics], name="BERTopic"))

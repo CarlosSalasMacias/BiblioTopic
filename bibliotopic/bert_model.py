@@ -17,7 +17,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import normalize
 
-from .lda_model import match_topics
+from .lda_model import match_topics, subsample_index
 from .text import Corpus, topic_diversity
 
 DEFAULT_MODEL = "Xenova/all-MiniLM-L6-v2"
@@ -115,9 +115,11 @@ def reassign_outliers(X, labels, W, idf, sim=None, threshold=0.0):
 
 class BERTResult:
     def __init__(self, corpus: Corpus, reduced_list, xy, emb_name, nr_topics=None,
-                 min_cluster_size=None, min_samples=None, outlier_threshold=0.0, umap_seeds=None):
+                 min_cluster_size=None, min_samples=None, outlier_threshold=0.0, umap_seeds=None,
+                 stab_subsample=0.0):
         """reduced_list: lista de matrices UMAP (n x 5), la primera es la principal y el resto
-        (otras semillas) se usan para la estabilidad."""
+        (otras semillas) se usan para la estabilidad. stab_subsample: fracción de documentos de cada réplica de
+        estabilidad (0 = todos; solo cambia la semilla de UMAP)."""
         X = corpus.X.tocsr()
         n = corpus.n_docs
         self.emb_name = emb_name
@@ -158,10 +160,16 @@ class BERTResult:
         self.labels = [f"B{i + 1}: " + ", ".join(w[:3]) for i, w in enumerate(self.top10)]
         self.xy = np.asarray(xy) if xy is not None else None
         self.n_stab = len(reduced_list) - 1
+        self.stab_subsample = float(stab_subsample or 0)
         if self.n_stab:
             sims = []
-            for red in reduced_list[1:]:
-                _, _, W2, _ = fit_topics(X, red, nr_topics or self.k, self.min_cluster_size, self.min_samples)
+            for r_, red in enumerate(reduced_list[1:]):
+                Xr = X
+                if 0 < self.stab_subsample < 1:
+                    seed_r = self.umap_seeds[r_ + 1] if len(self.umap_seeds) > r_ + 1 else r_ + 1
+                    idx = subsample_index(n, self.stab_subsample, seed_r)
+                    Xr, red = X[idx], np.asarray(red)[idx]
+                _, _, W2, _ = fit_topics(Xr, red, nr_topics or self.k, self.min_cluster_size, self.min_samples)
                 v = np.zeros(self.k)
                 if W2.shape[0]:
                     r, c, S = match_topics(self.ctfidf, W2)
@@ -185,7 +193,47 @@ class BERTResult:
             "Documents (before outlier reassignment)": self.sizes,
             "Outliers reassigned": np.bincount(self.topics[(self.topics_raw < 0) & (self.topics >= 0)],
                                                minlength=self.k),
+            "Low-confidence reassignments": np.bincount(self.topics[self.low_confidence & (self.topics >= 0)],
+                                                        minlength=self.k) if hasattr(self, "low_confidence")
+            else np.zeros(self.k, int),
             "NPMI": np.round(self.npmi, 3),
             "Stability (mean)": np.round(self.stab, 3),
             "Stability (SD)": np.round(getattr(self, "stab_sd", np.full(self.k, np.nan)), 3),
         })
+
+
+def min_cluster_size_sensitivity(corpus: Corpus, reduced_list, nr_topics, base_mcs, factors=(1.0, 0.5, 0.25),
+                                 min_samples=None, n_rep=5, floor=5):
+    """Sensibilidad a min_cluster_size (HDBSCAN): se repite el agrupamiento sobre la misma proyección UMAP con el
+    valor elegido y fracciones de él (½, ¼). Para cada valor: temas nativos y finales, % de outliers, NPMI media y
+    estabilidad media frente a las réplicas UMAP disponibles (hasta n_rep). Devuelve (tabla, etiquetas por valor)
+    para calcular después la concordancia con LDA."""
+    X = corpus.X.tocsr()
+    rows, labels = [], {}
+    seen = set()
+    for f in factors:
+        mcs = max(int(floor), int(round(base_mcs * f)))
+        if mcs in seen:
+            continue
+        seen.add(mcs)
+        ms = int(min_samples) if min_samples else mcs  # por defecto, igual a min_cluster_size
+        lab, native, W, _ = fit_topics(X, reduced_list[0], nr_topics, mcs, ms)
+        k = W.shape[0]
+        top10 = [list(corpus.vocab[np.argsort(-r)[:10]]) for r in W]
+        npmi = float(np.nanmean(corpus.npmi(top10))) if k else np.nan
+        stabs = []
+        for red in reduced_list[1:1 + int(n_rep)]:
+            _, _, W2, _ = fit_topics(X, red, nr_topics or k, mcs, ms)
+            v = np.zeros(k)
+            if W2.shape[0] and k:
+                r, c, S = match_topics(W, W2)
+                v[r] = S[r, c]
+            stabs.append(v)
+        rows.append({"min_cluster_size": mcs, "Relative to selected": f"×{f:g}",
+                     "Native clusters (HDBSCAN)": int(native), "Topics": int(k),
+                     "Outlier documents (%)": round(100 * float((lab < 0).mean()), 1),
+                     "Mean NPMI": round(npmi, 3),
+                     "Mean stability": round(float(np.mean(stabs)), 3) if stabs else np.nan,
+                     "Stability replicates": len(stabs)})
+        labels[mcs] = lab
+    return pd.DataFrame(rows), labels

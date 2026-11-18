@@ -282,8 +282,19 @@ def analyse(files, key=None):
                              ("coherence", "Coherence (1-5)", (1, 5)),
                              ("model_precision", "Word-intrusion precision", (0, 1))):
             m, lo, hi = mean_ci(g[c].values, bounds=bnd)
-            row[name] = f"{m:.2f} [{lo:.2f}, {hi:.2f}]"
+            v = g[c].dropna().values
+            # efecto techo: todos los temas del modelo con la puntuación máxima (la valoración no discrimina)
+            ceil = len(v) > 1 and np.all(np.isclose(v, bnd[1]))
+            row[name] = f"{m:.2f} [{lo:.2f}, {hi:.2f}]" + (" (ceiling: all topics at maximum)" if ceil else "")
+            if ceil:
+                out.setdefault("ceiling", []).append((model, name))
         rows.append(row)
+    # acuerdo entre evaluadores (alfa de Krippendorff) en la misma tabla
+    rows.append({"Model": "Inter-rater agreement (Krippendorff's α)",
+                 "Interpretability (1-5)": f"{alphas['interpretability']:.2f}" if np.isfinite(alphas["interpretability"]) else "n.a.",
+                 "Coherence (1-5)": f"{alphas['coherence']:.2f}" if np.isfinite(alphas["coherence"]) else "n.a.",
+                 "Word-intrusion precision": (f"{alphas['intrusion']:.2f} (nominal, on the chosen word)"
+                                              if np.isfinite(alphas["intrusion"]) else "n.a.")})
     table = pd.DataFrame(rows)
     tests = {}
     pt = per_topic.reset_index()

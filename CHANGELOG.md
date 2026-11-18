@@ -94,7 +94,26 @@ repetir con la versión 2 los análisis hechos con la versión 1.
 | IC de **ARI y NMI con jackknife delete-d** (submuestras sin reemplazo de la mitad de los documentos; Shao y Wu, 1989), centrado en la estimación. | El bootstrap con reemplazo duplica documentos, que coinciden en ambas particiones e inflan la concordancia: la estimación quedaba fuera de su intervalo. |
 | **Línea base nula re-emparejada**: en cada permutación se repite el emparejamiento húngaro y cada par se compara con la distribución de los cosenos emparejados bajo la nula (columnas «Re-matched null p» y «Above re-matched null»). | La nula por par no tiene en cuenta que el algoritmo húngaro elige las parejas más similares; la re-emparejada es más estricta. |
 
-No se automatizan (son decisiones de análisis que se hacen con las opciones existentes): bajar `min_cluster_size` cuando hay muchos outliers en BERTopic y la sensibilidad a otro K de LDA («Fijar K»).
+No se automatiza la sensibilidad a otro K de LDA (p. ej., K = número de temas de BERTopic): duplicaría el tiempo de LDA y se hace con «Fijar K». La sensibilidad a `min_cluster_size` sí se automatizó (abajo).
+
+### Segunda revisión: sensibilidad, comparabilidad y redacción
+
+| Cambio | Justificación |
+|---|---|
+| **Sensibilidad a `min_cluster_size`** (tabla `bert_mcs_sensitivity`): se repite HDBSCAN sobre la misma proyección UMAP con el valor elegido, ½ y ¼; para cada uno, grupos nativos, temas, % de outliers, NPMI, estabilidad (hasta 5 réplicas) y ARI/NMI con LDA. Opción en BERTopic (activada). | Con un 33 % de outliers, un árbitro pedirá ver qué ocurre con grupos más pequeños sin tener que repetir el análisis. |
+| Reasignaciones de **baja confianza** en la tabla de métricas (% de outliers reasignados y de baja confianza) y por tema en la tabla de BERTopic. | Se calculaban por documento, pero no aparecían en ninguna tabla. |
+| `bert_trends`: el análisis «solo documentos agrupados» incluye pendiente de Sen con IC, q de la prueba usada y la prueba. | Antes solo tenía la pendiente OLS, distinta de la prueba principal. |
+| **Submuestreo en las réplicas de estabilidad** (opción; 0 = solo semilla): cada réplica de LDA y de BERTopic usa además un submuestreo sin reemplazo de documentos. El texto indica qué varía en cada modelo. | En BERTopic solo cambia la semilla de UMAP (embeddings y HDBSCAN son deterministas), en LDA se reestima el modelo: el submuestreo añade la misma perturbación de datos a ambos. La fórmula del TRI no cambia. |
+| **Sensibilidad de tendencias** (tablas `lda_trend_sensitivity`, `bert_trend_sensitivity`): clasificación con solo los años con ≥ N documentos (por defecto 30) y con una regresión ponderada por documentos por año. Se omite si el umbral más exigente no deja 3 años. | Los años con pocos documentos dan medias ruidosas. |
+| Terminología opcional **creciente/decreciente** (Increasing/Decreasing) en lugar de emergente/en declive (Hot/Cold), en tablas y texto. | Petición de revisores: «emergente» sugiere novedad, no solo aumento. |
+| El texto de tendencias informa la **pendiente y la q de la prueba con la que se clasificó** (Sen y Hamed-Rao por defecto), en puntos porcentuales por año. | Antes citaba la pendiente y la q de OLS aunque la clasificación fuera de Mann-Kendall. |
+| **Concordancia de tendencias**: desglose (creciente en ambos, sin tendencia en ambos, decreciente en ambos, discordantes) y **kappa de Cohen**; se aclara que se calcula sobre los pares convergentes o parciales. | El porcentaje solo no distingue acuerdo por azar. |
+| Correspondencias muchos a uno con su propio **TRI** («Best-match TRI») y el número de temas que comparten la misma mejor correspondencia. | Permite valorar las correspondencias que el emparejamiento uno a uno descarta. |
+| Validación por expertos: **alfa de Krippendorff** en la misma tabla (T12), aviso de **efecto techo** cuando todos los temas de un modelo tienen la puntuación máxima, y la estabilidad del par se identifica como **media geométrica** en T12b. | Claridad de la tabla y de la interpretación. |
+| Línea base nula: el texto indica que el menor p posible es 1/(permutaciones + 1) y se informa como p ≤ ese valor. | Con 1000 permutaciones, «p < 0.001» no es alcanzable. |
+| Co-citación: apellidos con partícula (De, Da, Van, Von, Le…) completos y referencias anónimas agrupadas por fuente («Anonymous [FAOSTAT], 2014»); sin fuente se excluyen. | Aparecían nodos como «De, 2013» y «Anonymous, 2014». |
+| Periodos: opción para que los periodos de ancho fijo empiecen en el primer año con ≥ N documentos (los anteriores forman un periodo inicial). El texto describe el primer periodo cuando agrupa muchos años y advierte que el último incluye el año incompleto. | El primer periodo agrupaba 72 años sin explicarlo. |
+| Informe: tablas y figuras **numeradas por orden de primera cita** (dos pasadas); Resultados distingue el corpus bibliométrico y el de modelado con su n en cada apartado. | Requisito de Elsevier; antes la descripción general daba el n del corpus de modelado junto a estadísticas del bibliométrico. |
 
 ### Índice de Robustez Temática (TRI): fundamentación y primera validación
 

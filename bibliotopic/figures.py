@@ -362,8 +362,8 @@ def _slope_cols(t):
     """Pendiente coherente con la prueba de la clasificación: Sen (Mann-Kendall) u OLS (regresión)."""
     test = str(t["Test"].iloc[0]) if "Test" in t and len(t) else "OLS"
     if test.startswith("Mann-Kendall") and "Sen slope" in t:
-        return "Sen slope", "Sen CI low", "Sen CI high", "Sen slope of annual prevalence\n(×100) with 95% CI"
-    return "Slope", "CI low", "CI high", "OLS slope of annual prevalence\n(×100) with 95% CI"
+        return "Sen slope", "Sen CI low", "Sen CI high", "Sen slope of annual prevalence\n(percentage points per year, 95% CI)"
+    return "Slope", "CI low", "CI high", "OLS slope of annual prevalence\n(percentage points per year, 95% CI)"
 
 
 def trends(path, tl, tb, lda_labels, bert_labels):
@@ -415,7 +415,7 @@ def strategic(path, sm, title):
     for xi, yi, l in zip(x, y, sm["Topic"]):
         ax.text(xi, yi, " " + l.split(":")[0], fontsize=7.5)
     ax.set_xlabel("Growth: " + ("Sen slope" if gcol == "Growth (Sen slope)" else "OLS slope")
-                  + " of annual prevalence (×100)")
+                  + " of annual prevalence (percentage points per year)")
     ax.set_ylabel("Impact: mean citations per year")
     return _save(fig, path)
 

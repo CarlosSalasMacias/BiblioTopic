@@ -54,6 +54,8 @@ BASE = dict(
     umap_min_dist=0.0, embedding_model="Xenova/all-MiniLM-L6-v2",
     search_scopus="", search_wos="", search_date="", wos_indexes=[],
     export_tiff=True, cluster_shape="hull", composite=True, palette="auto", palette_variant=None,
+    stab_subsample=0.0, mcs_sensitivity=True, trend_min_docs_sensitivity=30, trend_terms="hot_cold",
+    first_period_min_docs=None,
 )
 
 # Perfiles. «publication» es el valor por defecto y está pensado para artículos en revistas Q1.
@@ -81,6 +83,22 @@ LEGACY_V1 = dict(
     lda_select_max_iter=10, trend_test="ols", umap_metric="euclidean", period_mode="width",
     min_cluster_size_rule="v1",
 )
+
+
+TREND_TERMS = {"Hot": "Increasing", "Cold": "Decreasing"}
+
+
+def _rename_trends(t):
+    """Sustituye Hot/Cold por Increasing/Decreasing en las columnas de tendencia (solo en la salida)."""
+    if not isinstance(t, pd.DataFrame):
+        return t
+    cols = [c_ for c_ in t.columns if "Trend" in str(c_) and t[c_].dtype == object]
+    if not cols:
+        return t
+    t = t.copy()
+    for c_ in cols:
+        t[c_] = t[c_].replace(TREND_TERMS)
+    return t
 
 
 def resolve_config(cfg: dict | None) -> dict:
@@ -132,7 +150,9 @@ def estimate_runtime(n_docs: int, cfg: dict, nnz_per_doc: float = 70.0, browser:
         runs = 2 + (c["n_stab_bert"] if "stability" in on else 0)
         emb_s = n_docs * (0.012 if "MiniLM" in c["embedding_model"] else 0.06)  # embeddings
         umap_s = runs * 2.0 * n_docs / 1000   # UMAP (JS): ~2 s por cada 1 000 documentos y proyección
-        clus_s = runs * 0.15 * n_docs / 1000  # HDBSCAN y c-TF-IDF (Pyodide)
+        clus_runs = runs + (2 * (1 + min(5, c["n_stab_bert"] if "stability" in on else 0))
+                            if c.get("mcs_sensitivity", True) else 0)  # sensibilidad a min_cluster_size
+        clus_s = clus_runs * 0.15 * n_docs / 1000  # HDBSCAN y c-TF-IDF (Pyodide)
         bert_s = emb_s + umap_s + clus_s
     # figuras, tablas, permutaciones y bootstrap (medido en el navegador: ~40 s con 7 600 documentos)
     other = 5 + n_docs * 0.0013 + (c["n_boot"] / 1000) * n_docs * 0.0002
@@ -446,7 +466,7 @@ class Session:
             k = int(self.ksel.loc[self.ksel["Score"].idxmax(), "K"])
         say(0.78, f"LDA final (K={k})")
         self.lda = LDAResult(self.corpus, k, seed=c["seed"], n_stab=n_stab, params=params, executor=executor,
-                             progress=lambda p, m: say(0.8 + 0.2 * p, m))
+                             stab_subsample=c.get("stab_subsample", 0.0), progress=lambda p, m: say(0.8 + 0.2 * p, m))
         self.seeds = self.seed_registry()
         return {"k": k, "iterations": self.lda.n_iter}
 
@@ -478,7 +498,15 @@ class Session:
         self.bert = BERTResult(self.corpus, reduced_list, xy, emb_name, nr_topics=self.bert_nr_topics(),
                                min_cluster_size=mcs, min_samples=c.get("min_samples"),
                                outlier_threshold=c.get("outlier_threshold", 0.0),
-                               umap_seeds=self.umap_settings()["seeds"])
+                               umap_seeds=self.umap_settings()["seeds"],
+                               stab_subsample=c.get("stab_subsample", 0.0))
+        self.bert_mcs_sens = None
+        if c.get("mcs_sensitivity", True):
+            # sensibilidad a min_cluster_size (mismo UMAP; solo se repite HDBSCAN): elegido, ½ y ¼
+            from .bert_model import min_cluster_size_sensitivity
+            self.bert_mcs_sens = min_cluster_size_sensitivity(
+                self.corpus, reduced_list, self.bert_nr_topics(), self.bert.min_cluster_size,
+                min_samples=c.get("min_samples"), n_rep=min(5, len(reduced_list) - 1))
         self.seeds = self.seed_registry()
         out = {"k": self.bert.k, "native": self.bert.native_topics,
                "outliers": round(100 * self.bert.outlier_rate, 1),
@@ -747,12 +775,13 @@ class Session:
 
         width = int(c["period_width"])
         mode = c.get("period_mode", "width")
+        fmd = c.get("first_period_min_docs") or None
         periods, plabels, pwarn = make_periods_mode(df["PY"], mode, width, c.get("n_periods", 5),
-                                                    c.get("custom_periods", ""))
+                                                    c.get("custom_periods", ""), first_min_docs=fmd)
         span = int(df["PY"].max() - df["PY"].min()) + 1
         while mode == "width" and len(plabels) < 4 and width > 2 and span >= 8:  # ≥ 4 periodos para el HJ-Biplot
             width -= 1
-            periods, plabels, pwarn = make_periods_mode(df["PY"], mode, width)
+            periods, plabels, pwarn = make_periods_mode(df["PY"], mode, width, first_min_docs=fmd)
         X["period_width"] = width
         X["period_mode"] = mode
         X["periods"] = plabels
@@ -824,11 +853,28 @@ class Session:
                 th_raw[np.arange(int(ok.sum())), bert.topics_raw[ok]] = 1.0
                 tr_raw, _ = compare.topic_trends(th_raw, df["PY"].values[ok], c["min_docs_year"], excl, c["alpha"],
                                                 c["trend_test"])
+                qcol = {"mann_kendall": "MK q-value (BH)", "mann_kendall_hr": "MK q-value (Hamed-Rao, BH)"}.get(
+                    c["trend_test"], "q-value (BH)")
                 tb["Slope (clustered only)"] = tr_raw["Slope"].values
+                tb["Sen slope (clustered only)"] = tr_raw["Sen slope"].values
+                tb["Sen CI low (clustered only)"] = tr_raw["Sen CI low"].values
+                tb["Sen CI high (clustered only)"] = tr_raw["Sen CI high"].values
+                tb[f"{qcol} (clustered only)"] = tr_raw[qcol].values
+                tb["Test (clustered only)"] = tr_raw["Test"].values
                 tb["Trend (clustered only)"] = tr_raw["Trend"].values
                 X["trends_bert_clustered"] = tr_raw
             T["bert_trends"] = tb.round(5)
         X["trends_lda"], X["trends_bert"] = trends_l, trends_b
+        # sensibilidad de la clasificación: mínimo de documentos por año más exigente y ponderación por año
+        alt = int(c.get("trend_min_docs_sensitivity") or 0)
+        X["trend_sens"] = {}
+        for nm_, tr_, res_ in (("LDA", trends_l, lda), ("BERTopic", trends_b, bert)):
+            if tr_ is not None and alt:
+                ts_ = compare.trend_sensitivity(res_.theta, df["PY"], tr_, res_.labels, alt, excl, c["alpha"],
+                                                c["trend_test"])
+                if ts_ is not None:
+                    T[f"{'lda' if nm_ == 'LDA' else 'bert'}_trend_sensitivity"] = ts_.round(5)
+                    X["trend_sens"][nm_] = ts_
         tr0 = trends_l if trends_l is not None else trends_b
         if tr0 is not None:
             X["min_docs_year_used"] = tr0.attrs.get("min_docs_year", c["min_docs_year"])
@@ -846,6 +892,20 @@ class Session:
             T["T8_model_metrics"] = C["metrics"]
             T["T9_topic_alignment"] = C["matches"].drop(columns=["_i", "_j"])
             T["doc_agreement"] = pd.DataFrame(list(C["agreement"].items()), columns=["Measure", "Value"])
+            ms_ = getattr(self, "bert_mcs_sens", None)
+            if ms_ is not None:
+                from sklearn.metrics import adjusted_rand_score as _ari, normalized_mutual_info_score as _nmi
+                tab_, labs_ = ms_
+                tab_ = tab_.copy()
+                ok_ = [labs_[m_] >= 0 for m_ in tab_["min_cluster_size"]]
+                tab_["NMI with LDA (clustered documents)"] = [
+                    round(float(_nmi(lda.dominant[o_], labs_[m_][o_])), 3) if o_.sum() > 1 else np.nan
+                    for m_, o_ in zip(tab_["min_cluster_size"], ok_)]
+                tab_["ARI with LDA (clustered documents)"] = [
+                    round(float(_ari(lda.dominant[o_], labs_[m_][o_])), 3) if o_.sum() > 1 else np.nan
+                    for m_, o_ in zip(tab_["min_cluster_size"], ok_)]
+                T["bert_mcs_sensitivity"] = tab_
+                X["mcs_sens"] = tab_
             FIG["sim"] = F.similarity_heatmap(fp("Fig16_LDA_vs_BERTopic_similarity.png"), C["S"],
                                               C["matches"], "Topic similarity between LDA and BERTopic",
                                               null=C.get("null"))
@@ -979,6 +1039,8 @@ class Session:
             conf = self.merged[self.merged["CONFLICTS"] != ""]
             if len(conf):
                 T["merge_conflicts"] = conf[["TI", "PY", "DI", "DB_SOURCES", "N_RECORDS", "CONFLICTS"]].reset_index(drop=True)
+        if c.get("trend_terms") == "increasing":  # terminología «Increasing / Decreasing» en lugar de «Hot / Cold»
+            T = {k_: _rename_trends(t_) for k_, t_ in T.items()}
         self.tables, self.figs, self.facts = T, FIG, X
         with pd.ExcelWriter(out / "tables" / "all_tables.xlsx") as xw:
             for name, t in T.items():

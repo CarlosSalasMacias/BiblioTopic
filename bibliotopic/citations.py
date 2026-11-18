@@ -67,8 +67,14 @@ def cited_by_topic(df: pd.DataFrame, assign, ids, labels, n=3):
 
 
 # ------------------------------------------------------------------ co-citación
+ANON = {"anonymous", "anon", "anonym", "no author", "no authors"}
+
+
 def ref_key(ref: str) -> str | None:
-    """'Aria M, 2017, J INFORMETR, V11' (WoS) o 'Aria, M., ..., (2017) Journal...' (Scopus) -> 'Aria M, 2017'."""
+    """'Aria M, 2017, J INFORMETR, V11' (WoS) o 'Aria, M., ..., (2017) Journal...' (Scopus) -> 'Aria M, 2017'.
+    Los apellidos con partícula (De, Da, Van, Von, Le...) se conservan completos («De Souza J, 2013», no «De,
+    2013») y las referencias anónimas se agrupan por fuente («Anonymous [FAOSTAT], 2014»); sin fuente identificable
+    se excluyen (None)."""
     ref = ref.strip()
     if not ref:
         return None
@@ -76,19 +82,30 @@ def ref_key(ref: str) -> str | None:
     if not m:
         return None
     year = m.group(1) if len(m.group(1)) == 4 else m.group(0)
-    first = re.split(r",", ref)[0].strip()
-    first = re.sub(r"[^A-Za-zÀ-ÿ\-\s']", "", first).strip()
+    segs = [x.strip() for x in ref.split(",")]
+    first = re.sub(r"[^A-Za-zÀ-ÿ\-\s']", "", segs[0]).strip()
     if not first:
         return None
+    if first.lower().strip("[] ") in ANON:
+        # fuente: segmento que sigue al año (WoS: «Anonymous, 2014, FAOSTAT DATABASE»)
+        src = ""
+        for i_, sg in enumerate(segs):
+            if sg == year and i_ + 1 < len(segs):
+                src = segs[i_ + 1]
+                break
+        src = re.sub(r"\s+", " ", re.sub(r"[^A-Za-z0-9À-ÿ\-\s]", "", src)).strip().upper()[:30]
+        return f"Anonymous [{src}], {year}" if src else None
     parts = first.split()
-    sur = parts[0].title() if parts else first
-    ini = ""
-    if "," in ref[:len(first) + 3]:
-        after = ref.split(",")[1].strip()
-        ini = re.sub(r"[^A-Z]", "", after)[:2]
-    elif len(parts) > 1:
-        ini = re.sub(r"[^A-Z]", "", parts[-1].upper())[:2]
-    return f"{sur} {ini}, {year}".replace("  ", " ")
+    wos_style = len(parts) > 1 and parts[-1].isupper() and len(parts[-1]) <= 3 and not first.isupper() or (
+        first.isupper() and len(parts) > 1 and len(parts[-1]) <= 3)
+    if wos_style:  # «De Souza J» / «DE SOUZA J»: apellido = todo menos las iniciales finales
+        sur, ini = " ".join(parts[:-1]), parts[-1]
+    else:  # Scopus: «De Souza, J.»
+        sur = " ".join(parts)
+        ini = re.sub(r"[^A-Z]", "", segs[1])[:2] if len(segs) > 1 else ""
+    sur = " ".join(w.capitalize() if not ("-" in w) else "-".join(x.capitalize() for x in w.split("-"))
+                   for w in sur.split())
+    return f"{sur} {ini[:2]}, {year}".replace("  ", " ")
 
 
 def cocitation(df: pd.DataFrame, top=40):

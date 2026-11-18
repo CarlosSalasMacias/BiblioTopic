@@ -56,6 +56,7 @@ REFS = {
     "shaowu89": "Shao, J., & Wu, C. F. J. (1989). A general theory for jackknife variance estimation. The Annals of Statistics, 17(3), 1176–1197. https://doi.org/10.1214/aos/1176347263",
     "hamed98": "Hamed, K. H., & Rao, A. R. (1998). A modified Mann-Kendall trend test for autocorrelated data. Journal of Hydrology, 204(1–4), 182–196. https://doi.org/10.1016/S0022-1694(97)00125-X",
     "sen68": "Sen, P. K. (1968). Estimates of the regression coefficient based on Kendall's tau. Journal of the American Statistical Association, 63(324), 1379–1389. https://doi.org/10.1080/01621459.1968.10480934",
+    "cohen60": "Cohen, J. (1960). A coefficient of agreement for nominal scales. Educational and Psychological Measurement, 20(1), 37–46. https://doi.org/10.1177/001316446002000104",
     "fleiss": "Fleiss, J. L. (1971). Measuring nominal scale agreement among many raters. Psychological Bulletin, 76(5), 378–382. https://doi.org/10.1037/h0031619",
     "kessler": "Kessler, M. M. (1963). Bibliographic coupling between scientific papers. American Documentation, 14(1), 10–25. https://doi.org/10.1002/asi.5090140103",
     "efron87": "Efron, B. (1987). Better bootstrap confidence intervals. Journal of the American Statistical Association, 82(397), 171–185. https://doi.org/10.1080/01621459.1987.10478410",
@@ -284,7 +285,7 @@ CITE_NAMES = {
     "efron": "Efron y Tibshirani, 1993", "greene": "Greene et al., 2014", "belford18": "Belford et al., 2018",
     "hosseiny23": "Hosseiny Marani y Baumer, 2023", "glaser17": "Gläser et al., 2017", "velden17": "Velden et al., 2017",
     "magsarjav25": "Magsarjav et al., 2025", "spearman": "Spearman, 1904", "mann45": "Mann, 1945",
-    "sen68": "Sen, 1968", "hamed98": "Hamed y Rao, 1998", "shaowu89": "Shao y Wu, 1989", "fleiss": "Fleiss, 1971", "kessler": "Kessler, 1963", "efron87": "Efron, 1987", "bh": "Benjamini y Hochberg, 1995", "mann": "Mann y Whitney, 1947", "chang": "Chang et al., 2009",
+    "sen68": "Sen, 1968", "hamed98": "Hamed y Rao, 1998", "shaowu89": "Shao y Wu, 1989", "fleiss": "Fleiss, 1971", "cohen60": "Cohen, 1960", "kessler": "Kessler, 1963", "efron87": "Efron, 1987", "bh": "Benjamini y Hochberg, 1995", "mann": "Mann y Whitney, 1947", "chang": "Chang et al., 2009",
     "hayes": "Hayes y Krippendorff, 2007", "callon": "Callon et al., 1991", "cobo": "Cobo et al., 2011",
     "small": "Small, 1973", "montazeri": "Montazeri et al., 2023",
 }
@@ -374,6 +375,18 @@ def _keyword_text(R, cfg):
             + ("; la tabla de equivalencias se proporciona como material suplementario." if len(km) else "."))
 
 
+def _sens_text(ts):
+    """Frase sobre la sensibilidad de la clasificación de tendencias (años con más documentos y ponderación)."""
+    if ts is None or not len(ts):
+        return ""
+    a, w = ts.attrs.get("changed_alt", 0), ts.attrs.get("changed_wls", 0)
+    n = len(ts)
+    return (f" En el análisis de sensibilidad, la clasificación cambió en {pl(a, 'tema', 'temas')} de {n} al "
+            f"considerar solo los años con al menos {ts.attrs.get('min_docs_alt')} documentos "
+            f"({ts.attrs.get('n_years_alt')} años) y en {pl(w, 'tema', 'temas')} con la regresión ponderada por "
+            "documentos por año.")
+
+
 def _trend_text(labels, tr):
     """Frase de resultados sobre tendencias: pendientes con IC 95 % y sin afirmar estabilidad."""
     if tr is None:
@@ -382,10 +395,17 @@ def _trend_text(labels, tr):
         return ("las tendencias no pudieron estimarse, porque menos de tres años alcanzaron el número mínimo "
                 "de documentos.")
 
+    test = str(tr["Test"].iloc[0]) if "Test" in tr and len(tr) else "OLS"
+    mk = test.startswith("Mann-Kendall") and "Sen slope" in tr
+    sc, lc, hc = ("Sen slope", "Sen CI low", "Sen CI high") if mk else ("Slope", "CI low", "CI high")
+    qc = ("MK q-value (Hamed-Rao, BH)" if "Hamed" in test else "MK q-value (BH)") if mk else "q-value (BH)"
+    qc = qc if qc in tr else "q-value (BH)"
+
     def item(i):
+        # la pendiente y la q son las de la prueba con la que se clasificó el tema (Sen con Mann-Kendall)
         r = tr.iloc[i]
-        return (f"{labels[i]} (pendiente = {f(100 * r['Slope'], 2)} × 10⁻²; IC 95 %: {f(100 * r['CI low'], 2)} a "
-                f"{f(100 * r['CI high'], 2)}; q = {f(r['q-value (BH)'], 3)})")
+        return (f"{labels[i]} (pendiente{' de Sen' if mk else ''} = {f(100 * r[sc], 3)} puntos porcentuales por año; "
+                f"IC 95 %: {f(100 * r[lc], 3)} a {f(100 * r[hc], 3)}; q {fp(r[qc])})")
     hot = [i for i in range(len(labels)) if tr["Trend"].iloc[i] == "Hot"]
     cold = [i for i in range(len(labels)) if tr["Trend"].iloc[i] == "Cold"]
     ne = int(tr["Trend"].eq("Not estimable").sum())
@@ -410,7 +430,16 @@ def _trend_text(labels, tr):
     return txt + ". Estas tendencias describen el corpus recuperado y tienen carácter exploratorio."
 
 def build(R, path, meta, sections=None):
-    """meta: topic_name, title, query, search_date, embedding_tool.  sections: subconjunto de SECTIONS."""
+    """meta: topic_name, title, query, search_date, embedding_tool.  sections: subconjunto de SECTIONS.
+    Las tablas y figuras se numeran por orden de primera cita en el texto (requisito de Elsevier y de la mayoría
+    de las revistas): una primera pasada registra el orden de las citas y la segunda numera con él; los
+    elementos no citados van al final en su orden por defecto."""
+    import io as _io
+    _, order = _build(R, _io.BytesIO(), meta, sections)
+    return _build(R, path, meta, sections, order)[0]
+
+
+def _build(R, path, meta, sections=None, order=None):
     sections = set(sections or SECTIONS)
     cfg, df, lda, bert, T, FIG, X = R.cfg, R.df, R.lda, R.bert, R.tables, R.figs, R.facts
     C, info, ap = X.get("C"), X["info"], X["ap"]
@@ -424,9 +453,15 @@ def build(R, path, meta, sections=None):
            "requieren revisión de los autores expertos en la temática (en particular, las etiquetas "
            "de los temas). Título, figuras y tablas en inglés; texto en español.")
     comps = X.get("composites", {}) if meta.get("composite", True) else {}
-    W.reserve([], [k for k in TAB_ORDER if k in T])
-    W.reserve_figs([k for k in FIG_ORDER if k in FIG], comps)
+    tab_keys = [k for k in TAB_ORDER if k in T]
+    fig_keys = [k for k in FIG_ORDER if k in FIG]
+    if order:
+        tab_keys = [k for k in order if k in tab_keys] + [k for k in tab_keys if k not in order]
+        fig_keys = [k for k in order if k in fig_keys] + [k for k in fig_keys if k not in order]
+    W.reserve([], tab_keys)
+    W.reserve_figs(fig_keys, comps)
     used = set()
+    cited = []
 
     def cite(*keys):
         used.update(keys)
@@ -435,6 +470,7 @@ def build(R, path, meta, sections=None):
     def ref(*keys):
         """'(Tabla 2; Figura 3)' solo con los elementos que existen."""
         parts = [W.T(k) if k in W.tab_no else W.F(k) for k in keys if k in W.tab_no or k in W.fig_no]
+        cited.extend(k for k in keys if (k in W.tab_no or k in W.fig_no) and k not in cited)
         return f" ({'; '.join(parts)})" if parts else ""
 
     def tl_(labels):
@@ -451,6 +487,11 @@ def build(R, path, meta, sections=None):
     py = df["PY"].astype(int)
     n = len(df)
     trends_l, trends_b = X.get("trends_lda"), X.get("trends_bert")
+    inc_w = cfg.get("trend_terms") == "increasing"
+    em_txt = "crecientes o decrecientes" if inc_w else "emergentes o en declive"
+    sub = float(cfg.get("stab_subsample") or 0)
+    sub_txt = (f" y, en cada réplica, un submuestreo aleatorio sin reemplazo del {f(100 * sub, 0)} % de los documentos"
+               if 0 < sub < 1 else "")
 
     # ================================================================ MÉTODOS
     if "methods" in sections:
@@ -632,7 +673,7 @@ def build(R, path, meta, sections=None):
                 f"Dirichlet α = {lp['doc_topic_prior']:.3g} (documento-tema) y η = {lp['topic_word_prior']:.3g} "
                 f"(tema-palabra) y semilla {cfg['seed']}. " + ksel_txt
                 + (f"Para evaluar la estabilidad, el modelo final se reestimó con {len(lda.stab_seeds) if getattr(lda, 'stab_seeds', None) else cfg['n_stab_lda']} "
-                   "semillas aleatorias distintas; cada tema se emparejó con su homólogo mediante el algoritmo húngaro "
+                   f"semillas aleatorias distintas{sub_txt}; cada tema se emparejó con su homólogo mediante el algoritmo húngaro "
                    f"{cite('kuhn')} y se calculó la similitud coseno con su par en cada réplica; se informa la media "
                    "± desviación estándar por tema y global." if stab_on else ""))
 
@@ -667,8 +708,16 @@ def build(R, path, meta, sections=None):
                 "confianza las reasignaciones con una similitud inferior al percentil 25 de la de los documentos "
                 "agrupados. La prevalencia y las tendencias se informan también solo con los documentos asignados "
                 "por el agrupamiento, como análisis de sensibilidad."
-                + (f" La estabilidad se evaluó con {bert.n_stab} semillas de UMAP distintas, emparejando los "
-                   "temas con el algoritmo húngaro." if bert.n_stab else "")
+                + (f" La estabilidad se evaluó con {bert.n_stab} semillas de UMAP distintas{sub_txt}, emparejando "
+                   "los temas con el algoritmo húngaro. Como los embeddings y HDBSCAN son deterministas, en BERTopic "
+                   "la variación entre réplicas procede de la proyección UMAP, mientras que en LDA procede de la "
+                   "reestimación completa del modelo; ambas estabilidades miden, por tanto, la sensibilidad a los "
+                   "componentes aleatorios de cada procedimiento" + (" y al submuestreo de documentos" if sub_txt else "")
+                   + ", y no son una medida idéntica en los dos modelos." if bert.n_stab else "")
+                + (f" Como análisis de sensibilidad, el agrupamiento se repitió sobre la misma proyección UMAP con "
+                   f"tamaños mínimos de grupo de {enum_es([str(v) for v in X['mcs_sens']['min_cluster_size']])}, "
+                   "y para cada valor se informan el número de grupos, la proporción de outliers, la coherencia, la "
+                   "estabilidad y la concordancia con LDA." if X.get("mcs_sens") is not None else "")
                 + f" El procedimiento se ejecutó en el navegador mediante {meta.get('embedding_tool', 'transformers.js y umap-js')}.")
 
         if (R.on("temporal") or R.on("hjbiplot")) and (lda is not None or bert is not None):
@@ -700,15 +749,31 @@ def build(R, path, meta, sections=None):
                         + ({"mann_kendall": "en la prueba de Mann-Kendall",
                             "mann_kendall_hr": "en la prueba de Mann-Kendall corregida por autocorrelación"}.get(
                                cfg.get("trend_test"), "en la regresión"))
-                        + " se clasificaron como emergentes o en declive según el signo de la pendiente, y los demás "
+                        + f" se clasificaron como {em_txt} según el signo de la pendiente, y los demás "
                         "como sin tendencia significativa. "
                         "Cuando menos de tres años alcanzaron el mínimo de documentos, la tendencia se consideró no "
-                        "estimable. ")
+                        "estimable. "
+                        + (f"Como análisis de sensibilidad, la clasificación se repitió considerando solo los años "
+                           f"con al menos {X['trend_sens'][next(iter(X['trend_sens']))].attrs.get('min_docs_alt')} "
+                           "documentos y mediante una regresión ponderada por el número de documentos de cada año, "
+                           "en la que los años con pocos documentos, cuyas medias son menos precisas, pesan menos. "
+                           if X.get("trend_sens") else ""))
             if R.on("hjbiplot"):
                 pmode = {"quantile": "con un número similar de documentos", "custom": "definidos por los autores"}.get(
                     X.get("period_mode"), f"de {X.get('period_width')} años")
+                p0, pl_ = X["periods"][0], X["periods"][-1]
+                n0 = int(T["periods"]["Documents"].iloc[0]) if "periods" in T else None
+                per_note = ""
+                if "-" in p0:
+                    a0, b0 = (int(v) for v in p0.split("-"))
+                    if b0 - a0 + 1 > 2 * max(int(X.get("period_width") or 5), 1):
+                        per_note += (f" El primer periodo ({p0}) agrupa {b0 - a0 + 1} años con pocas publicaciones"
+                                     + (f" ({f(n0, 0)} documentos)" if n0 is not None else "") + ".")
+                if X.get("trend_excluded_years") and str(X["trend_excluded_years"][0]) in pl_.split("-")[-1:]:
+                    per_note += (f" El último periodo ({pl_}) incluye {X['trend_excluded_years'][0]}, año aún incompleto "
+                                 "en la fecha de la búsqueda, por lo que su prevalencia debe interpretarse con cautela.")
                 txt += (f"Para analizar conjuntamente temas y tiempo se agruparon los años en periodos {pmode} "
-                        f"({enum_es(X['periods'])}) y se construyó una matriz periodo × tema con la prevalencia "
+                        f"({enum_es(X['periods'])}).{per_note} Con estos periodos se construyó una matriz periodo × tema con la prevalencia "
                         f"media, a la que se aplicó un HJ-Biplot {cite('galindo', 'gabriel')}. Este método "
                         "representa filas y columnas en un mismo sistema de ejes con la máxima calidad de "
                         "representación; los ángulos agudos entre vectores de temas indican correlación "
@@ -742,7 +807,9 @@ def build(R, path, meta, sections=None):
                    "(valor p por permutación y percentil 95 nulo). Como el algoritmo húngaro selecciona las parejas "
                    "más similares, se aplicó además una línea base más estricta: en cada permutación se repitió el "
                    "emparejamiento y cada par observado se comparó con la distribución de los cosenos emparejados "
-                   "bajo la nula" if cfg.get("n_perm") else "")
+                   f"bajo la nula; con {f(cfg.get('n_perm'), 0)} permutaciones, el menor valor p posible es "
+                   f"1/({f(cfg.get('n_perm'), 0)} + 1), por lo que los valores mínimos se informan como "
+                   f"p ≤ {f(1 / (int(cfg.get('n_perm')) + 1), 4)}" if cfg.get("n_perm") else "")
                 + ". (iii) Coincidencia a nivel de documento: índice de Rand ajustado "
                 f"(ARI) {cite('hubert')} e información mutua normalizada (NMI) {cite('strehl')} entre el tema "
                 "dominante de LDA y el tema asignado por BERTopic, calculados por separado para todos los documentos "
@@ -772,8 +839,12 @@ def build(R, path, meta, sections=None):
                    "estabilidad de alguno de los temas, el TRI se informó como no disponible" if stab_on else "")
                 + ". Para cada par se informan los términos compartidos y el documento más representativo de cada "
                 "tema."
-                + (" Finalmente, se evaluó la concordancia en la clasificación temporal (emergente, sin tendencia "
-                   "significativa o en declive) de los temas emparejados con tendencia estimable." if R.on("temporal") else ""))
+                + (" Finalmente, se evaluó la concordancia en la clasificación temporal ("
+                   + ("creciente, sin tendencia significativa o decreciente" if inc_w else
+                      "emergente, sin tendencia significativa o en declive")
+                   + ") de los pares convergentes o parciales con tendencia estimable en ambos modelos, mediante el "
+                   f"porcentaje de coincidencia, su desglose por clase y la kappa de Cohen {cite('cohen60')}."
+                   if R.on("temporal") else ""))
 
         if "T8b_inference" in T:
             W.h(f"2.{next(s)}. Inferencia estadística", 2)
@@ -890,16 +961,21 @@ def build(R, path, meta, sections=None):
         sec = num()
         W.h(f"3.{next(sec)}. Descripción general del corpus", 2)
         peak = ap.loc[ap["Articles"].idxmax()]
-        recent = py[py >= py.max() - 9]
-        W.p(f"El corpus final incluyó {f(n, 0)} documentos publicados en "
+        dfb_r = R.dfb if getattr(R, "dfb", None) is not None else df
+        nb = len(dfb_r)
+        pyb = dfb_r["PY"].dropna().astype(int)
+        recent = pyb[pyb >= pyb.max() - 9]
+        W.p(f"El corpus bibliométrico incluyó {f(nb, 0)} documentos publicados en "
             f"{info['Sources (journals, books, etc.)']} fuentes por {f(info['Authors'], 0)} autores entre "
-            f"{py.min()} y {py.max()}{ref('T1_main_information')}. La producción creció a una tasa anual "
+            f"{pyb.min()} y {pyb.max()}{ref('T1_main_information')}"
+            + (f"; de ellos, {f(n, 0)} tenían resumen y formaron el corpus de modelado de temas" if nb != n else "")
+            + ". La producción creció a una tasa anual "
             f"compuesta de {f(next(v for k, v in info.items() if k.startswith('Annual growth')))} % "
             f"({next(k for k in info if k.startswith('Annual growth')).split()[3]}), con {f(info['Co-authors per document'])} "
             f"coautores por documento y {f(info['Single-authored documents'], 0)} documentos de autoría única. "
             f"El año más productivo fue {int(peak['Year'])} ({f(peak['Articles'], 0)} documentos). La mitad del "
-            f"corpus se publicó a partir de {int(np.median(py))} y el {f(100 * len(recent) / n, 1)} % en los "
-            f"últimos diez años ({py.max() - 9}-{py.max()}){ref('annual')}."
+            f"corpus se publicó a partir de {int(np.median(pyb))} y el {f(100 * len(recent) / max(len(pyb), 1), 1)} % en los "
+            f"últimos diez años ({pyb.max() - 9}-{pyb.max()}){ref('annual')}."
             + (f" El promedio de citas por documento fue de {f(info['Average citations per document'])}."
                if "Average citations per document" in info else ""))
         ov = ms.get("overlap", {})
@@ -911,7 +987,7 @@ def build(R, path, meta, sections=None):
         if "T2_top_sources" in T:
             W.h(f"3.{next(sec)}. Fuentes y autores", 2)
             src = T["T2_top_sources"]
-            W.p("Las fuentes con más publicaciones fueron "
+            W.p(f"En el corpus bibliométrico (n = {f(nb, 0)}), las fuentes con más publicaciones fueron "
                 + enum_es([f"{s_.title()} (n = {a})" for s_, a in src[["Source", "Articles"]].values[:3]])
                 + f"{ref('T2_top_sources', 'sources')}. Según la ley de Bradford, {X['bradford_zone1']} de las "
                 f"{f(X['n_sources'], 0)} fuentes ({f(100 * X['bradford_zone1'] / X['n_sources'], 1)} %) "
@@ -956,8 +1032,9 @@ def build(R, path, meta, sections=None):
         if lda is not None:
             W.h(f"3.{next(sec)}. Temas identificados con LDA", 2)
             order = np.argsort(-lda.prevalence)
-            txt = (f"El criterio combinado de las cuatro métricas indicó K = {lda.k} como número óptimo de "
-                   f"temas{ref('ksel')}; " if R.ksel is not None else f"Con K = {lda.k} temas, ")
+            txt = f"Sobre el corpus de modelado (n = {f(n, 0)} documentos), "
+            txt += (f"el criterio combinado de las métricas indicó K = {lda.k} como número óptimo de "
+                    f"temas{ref('ksel')}; " if R.ksel is not None else f"con K = {lda.k} temas, ")
             txt += (f"la coherencia NPMI media fue {f(np.nanmean(lda.npmi), 3)} y la diversidad "
                     f"{f(lda.diversity, 3)}"
                     + (f"; la estabilidad media entre semillas fue {f(np.nanmean(lda.stab), 3)}" if stab_on else "")
@@ -973,7 +1050,8 @@ def build(R, path, meta, sections=None):
                 + ". Los menos prevalentes fueron "
                 + enum_es([f"{lda.labels[i]} ({f(100 * lda.prevalence[i], 1)} %)" for i in order[-2:]]) + ".")
             if R.on("temporal") and trends_l is not None:
-                W.p(f"Respecto a la dinámica temporal{ref('lda_time', 'trends')}, " + _trend_text(lda.labels, trends_l))
+                W.p(f"Respecto a la dinámica temporal{ref('lda_time', 'trends')}, " + _trend_text(lda.labels, trends_l)
+                    + _sens_text(X.get("trend_sens", {}).get("LDA")))
             if "hj_l" in X:
                 hj = X["hj_l"]
                 a = _biplot_associations(hj)
@@ -988,7 +1066,8 @@ def build(R, path, meta, sections=None):
         if bert is not None:
             W.h(f"3.{next(sec)}. Temas identificados con BERTopic", 2)
             ob = np.argsort(-bert.prevalence)
-            W.p(f"HDBSCAN identificó {pl(bert.native_topics, 'grupo semántico', 'grupos semánticos')}"
+            W.p(f"Sobre el mismo corpus de modelado (n = {f(n, 0)}), HDBSCAN identificó "
+                f"{pl(bert.native_topics, 'grupo semántico', 'grupos semánticos')}"
                 + (f", que se redujeron a {bert.k} temas" if bert.native_topics != bert.k else "")
                 + f"; el {f(100 * bert.outlier_rate, 1)} % de los documentos quedó inicialmente sin asignar "
                 f"(outliers){ref('T7_BERTopic_topics', 'bert_words', 'bert_map')}. La coherencia NPMI media "
@@ -997,15 +1076,38 @@ def build(R, path, meta, sections=None):
                 + ". Los temas de mayor tamaño fueron " + "; ".join(
                     f"{bert.labels[i]} ({f(100 * bert.prevalence[i], 1)} %; {', '.join(bert.top10[i][:6])})"
                     for i in ob[:3]) + ".")
+            lc_ = int(np.sum(getattr(bert, "low_confidence", [])))
+            rs_ = int(np.sum(getattr(bert, "reassigned", [])))
+            ms_ = X.get("mcs_sens")
+            extra_b = ""
+            if rs_:
+                extra_b += (f"De los {f(rs_, 0)} outliers reasignados, {f(lc_, 0)} ({f(100 * lc_ / rs_, 1)} %) lo fueron "
+                            "con baja confianza (similitud inferior al percentil 25 de la de los documentos agrupados). ")
+            if ms_ is not None and len(ms_) > 1:
+                sel_ = ms_.iloc[0]
+                others = ms_.iloc[1:]
+                extra_b += ("Al reducir el tamaño mínimo de grupo de HDBSCAN, la proporción de outliers pasó del "
+                            f"{f(sel_['Outlier documents (%)'], 1)} % (tamaño {int(sel_['min_cluster_size'])}) al "
+                            + enum_es([f"{f(r_['Outlier documents (%)'], 1)} % (tamaño {int(r_['min_cluster_size'])}; "
+                                       f"{int(r_['Native clusters (HDBSCAN)'])} grupos nativos; NPMI = {f(r_['Mean NPMI'], 3)}"
+                                       + (f"; estabilidad = {f(r_['Mean stability'], 3)}" if np.isfinite(r_['Mean stability']) else "")
+                                       + (f"; NMI con LDA = {f(r_['NMI with LDA (clustered documents)'], 3)}"
+                                          if "NMI with LDA (clustered documents)" in r_ else "") + ")"
+                                       for _, r_ in others.iterrows()])
+                            + ", frente a una coherencia NPMI de "
+                            f"{f(sel_['Mean NPMI'], 3)} con el valor elegido (material suplementario). ")
+            if extra_b:
+                W.p(extra_b)
             txt = ""
             if R.on("temporal") and trends_b is not None:
-                txt += f"En el tiempo{ref('bert_time')}, " + _trend_text(bert.labels, trends_b) + " "
+                txt += (f"En el tiempo{ref('bert_time')}, " + _trend_text(bert.labels, trends_b)
+                        + _sens_text(X.get("trend_sens", {}).get("BERTopic")) + " ")
                 trc = X.get("trends_bert_clustered")
                 if trc is not None:
                     same = float((trc["Trend"].values == trends_b["Trend"].values).mean())
                     txt += (f"Al repetir el análisis solo con los documentos asignados por el agrupamiento (sin "
-                            f"reasignar los outliers), la clasificación coincidió en el {f(100 * same, 0)} % de los "
-                            "temas. ")
+                            f"reasignar los outliers; n = {f(int((bert.topics_raw >= 0).sum()), 0)}) y la misma prueba, la "
+                            f"clasificación coincidió en el {f(100 * same, 0)} % de los temas. ")
             if "hj_b" in X:
                 hjb = X["hj_b"]
                 ab = _biplot_associations(hjb)
@@ -1059,8 +1161,17 @@ def build(R, path, meta, sections=None):
                 f"considerando todos los documentos con los outliers reasignados (n = {f(len(bert.topics), 0)}), y "
                 f"ARI = {f(ag['ARI (non-outliers)'], 3)} y NMI = {f(ag['NMI (non-outliers)'], 3)} considerando solo "
                 f"los documentos asignados originalmente por el agrupamiento (n = {f(int((bert.topics_raw >= 0).sum()), 0)})."
-                + (f" En los temas emparejados, ambos modelos coincidieron en la clasificación temporal en el "
-                   f"{f(100 * tag, 1)} % de los casos." if R.on("temporal") and not np.isnan(tag) else ""))
+                + (f" En los {ag.get('Trend pairs evaluated (convergent or partial matches)', '')} pares "
+                   "convergentes o parciales con tendencia estimable, ambos modelos coincidieron en la clasificación "
+                   f"temporal en el {f(100 * tag, 1)} % de los casos ("
+                   + "; ".join([f"{t_}: {int(ag.get(k_, 0))}" for k_, t_ in (
+                       ("Increasing in both", "creciente en ambos" if inc_w else "emergente en ambos"),
+                       ("No significant trend in both", "sin tendencia en ambos"),
+                       ("Decreasing in both", "decreciente en ambos" if inc_w else "en declive en ambos"),
+                       ("Discordant", "discordantes"))])
+                   + ("; kappa de Cohen = " + f(ag.get("Cohen's kappa (trend classes)"), 2)
+                      if np.isfinite(ag.get("Cohen's kappa (trend classes)", np.nan)) else "")
+                   + ")." if R.on("temporal") and not np.isnan(tag) else ""))
             inf = X.get("inference")
             if inf:
                 ch, d = inf["coh"], inf["coh"]["difference"]
@@ -1162,6 +1273,7 @@ def build(R, path, meta, sections=None):
             W.h(f"3.{next(sec)}. Validación por expertos", 2)
             al = V["alpha"]
             tv = V["table"].set_index("Model")
+            tv = tv[[m_ in ("LDA", "BERTopic") for m_ in tv.index]]  # sin la fila del alfa de Krippendorff
             txt = (f"Participaron {pl(V['n_raters'], 'evaluador', 'evaluadores')}{ref('T12_expert_validation')}. "
                    + "; ".join(f"{'E' if i == 0 else 'e'}n {m}, la interpretabilidad media fue {tv.loc[m, 'Interpretability (1-5)']}, la "
                                f"coherencia {tv.loc[m, 'Coherence (1-5)']} y la precisión en la prueba de la palabra "
@@ -1179,6 +1291,10 @@ def build(R, path, meta, sections=None):
             fk = (V.get("fleiss_kappa") or {}).get("intrusion")
             if fk is not None and not np.isnan(fk):
                 txt += f" La kappa de Fleiss para la elección de la palabra intrusa fue {f(fk, 3)}."
+            for m_, nm_ in V.get("ceiling", []):
+                txt += (f" En {m_}, la { {'Interpretability (1-5)': 'interpretabilidad', 'Coherence (1-5)': 'coherencia'}.get(nm_, 'precisión de la palabra intrusa') }"
+                        " alcanzó el valor máximo en todos los temas (efecto techo), por lo que esta valoración no "
+                        "discrimina entre los temas de ese modelo.")
             W.p(txt)
             te = X.get("tri_experts")
             if te:
@@ -1202,12 +1318,15 @@ def build(R, path, meta, sections=None):
                     f"la correlación del TRI con la interpretabilidad media fue {_r('TRI', 'interpretability')}, con la "
                     f"coherencia {_r('TRI', 'coherence')} y con la precisión de la palabra intrusa "
                     f"{_r('TRI', 'model_precision')}. Con el coseno solo, la correlación con la interpretabilidad fue "
-                    f"{_r('Cosine', 'interpretability')}, y con la estabilidad media sola, "
+                    f"{_r('Cosine', 'interpretability')}, y con la estabilidad del par sola (media geométrica de las "
+                    "dos estabilidades, la misma que entra en el TRI), "
                     f"{_r('Mean stability', 'interpretability')}."
                     + (f" La diferencia entre el TRI y la estabilidad sola fue {_d('Mean stability', 'interpretability')}"
                        + (f", y entre el TRI y el coseno solo, {_d('Cosine', 'interpretability')}"
                           if _d('Cosine', 'interpretability') else "") + "."
                        if _d('Mean stability', 'interpretability') else "")
+                    + (" La precisión de la palabra intrusa fue constante entre los pares, por lo que su correlación "
+                       "no pudo estimarse." if "model_precision" in F_.get("ceiling", []) else "")
                     + " Con este número de pares, estas correlaciones son exploratorias.")
 
     # ============================================================== DISCUSIÓN (IA)
@@ -1286,7 +1405,7 @@ def build(R, path, meta, sections=None):
     if "checklist" in sections:
         _checklist(W, R, meta, FIG, T)
     W.doc.save(path)
-    return path
+    return path, cited
 
 
 def _checklist(W, R, meta, FIG, T):

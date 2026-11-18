@@ -396,6 +396,8 @@ def tri_expert_correlation(matches, lda_ids, bert_ids, per_topic, min_pairs=5, B
         ok = d[list(preds) + [c]].dropna()
         n = len(ok)
         usable = n >= min_pairs and ok[c].nunique() > 1
+        if n >= min_pairs and ok[c].nunique() <= 1:
+            facts.setdefault("ceiling", []).append(c)
         boots = {p_: [] for p_ in preds}
         if usable:
             X = {p_: ok[p_].values for p_ in preds}
@@ -427,7 +429,9 @@ def tri_expert_correlation(matches, lda_ids, bert_ids, per_topic, min_pairs=5, B
                 facts[("TRI-" + other, c)] = {"diff": float(point), "lo": float(lo), "hi": float(hi), "p": pv}
                 diffs.append((other, nm, f"Δρ = {point:.3f} [{lo:.3f}, {hi:.3f}] (bootstrap p {('= ' + fmt_p(pv)) if pv >= 0.001 else fmt_p(pv)})"))
     table = pd.DataFrame([out[p_] for p_ in preds])
-    for other, label in (("Mean stability", "TRI − mean stability"), ("Cosine", "TRI − cosine")):
+    # la «estabilidad media» del par es la media geométrica de las dos estabilidades (la misma que entra en el TRI)
+    table["Predictor"] = table["Predictor"].replace({"Mean stability": "Pair stability (geometric mean)"})
+    for other, label in (("Mean stability", "TRI − pair stability (geometric mean)"), ("Cosine", "TRI − cosine")):
         row = {"Predictor": label}
         for c, nm in names.items():
             row[nm] = next((t for o, n_, t in diffs if o == other and n_ == nm), "n.a.")

@@ -5,13 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BiblioTopic</title>
 <meta name="description" content="Bibliometría, LDA, BERTopic y HJ-Biplot sobre corpus de Web of Science y Scopus, con borrador de Métodos y Resultados.">
-<link rel="stylesheet" href="css/style.css?v=20261131">
+<link rel="stylesheet" href="css/style.css?v=20261132">
 </head>
 <body>
 <header>
   <div class="wrap">
     <h1>BiblioTopic</h1>
-    <p class="sub">Bibliometría · LDA · BERTopic · HJ-Biplot · Borrador del artículo</p>
+    <p class="sub">Bibliometría · LDA · BERTopic · HJ-Biplot</p>
     <div id="env" class="env"><span class="dot"></span><span id="env-msg">Preparando el entorno…</span>
       <div class="bar small"><div id="env-bar"></div></div></div>
   </div>
@@ -147,6 +147,8 @@
         <label>min_samples (0 = igual al tamaño mínimo) <input type="number" id="o-msamp" value="0" min="0"></label>
         <label>Umbral de reasignación de outliers (c-TF-IDF; 0 = todos) <input type="number" id="o-othr" value="0" min="0" max="1" step="0.05"></label>
         <label>Réplicas de estabilidad BERTopic (semillas de UMAP) <input type="number" id="o-sbert" min="1" max="20"></label>
+        <label>Submuestreo en las réplicas de estabilidad (fracción de documentos, LDA y BERTopic; 0 = solo cambia la semilla) <input type="number" id="o-stabsub" value="0" min="0" max="0.95" step="0.05"></label>
+        <label class="chk"><input type="checkbox" id="o-mcssens" checked> Sensibilidad a min_cluster_size (valor elegido, ½ y ¼)</label>
         <h4 class="wide">Comparación, inferencia y tiempo</h4>
         <label>Remuestreos bootstrap <input type="number" id="o-boot" min="100" max="5000" step="100"></label>
         <label>Tipo de intervalo
@@ -156,9 +158,13 @@
         <label>τ parcial <input type="number" id="o-taup" value="0.3" step="0.05"></label>
         <label>Prueba de tendencia
           <select id="o-trend"><option value="mann_kendall_hr">Mann-Kendall corregido por autocorrelación (Hamed-Rao) + pendiente de Sen</option><option value="mann_kendall">Mann-Kendall clásico + pendiente de Sen</option><option value="ols">Regresión lineal (OLS)</option></select></label>
+        <label>Terminología de las tendencias
+          <select id="o-trendterms"><option value="hot_cold">Emergente / en declive (Hot / Cold)</option><option value="increasing">Creciente / decreciente (Increasing / Decreasing)</option></select></label>
+        <label>Sensibilidad de tendencias: años con al menos N documentos (0 = no) <input type="number" id="o-trendsens" value="30" min="0"></label>
         <label>Periodos
           <select id="o-pmode"><option value="width">Ancho fijo</option><option value="quantile">Nº similar de documentos</option><option value="custom">Personalizados</option></select></label>
         <label>Amplitud de periodos (años) <input type="number" id="o-pw" value="5" min="2"></label>
+        <label>Ancho fijo: los periodos empiezan en el primer año con al menos N documentos; los años anteriores forman un periodo inicial (0 = no) <input type="number" id="o-pfirst" value="0" min="0"></label>
         <label>Número de periodos (nº similar de documentos) <input type="number" id="o-np" value="5" min="3" max="10"></label>
         <label class="wide">Periodos personalizados (p. ej.: 1990-2005, 2006-2015, 2016-2025) <input type="text" id="o-pcustom"></label>
         <label>Frecuencia documental mínima <input type="number" id="o-mindf" value="5" min="1"></label>
@@ -278,6 +284,6 @@
 <footer class="wrap">BiblioTopic · código abierto en
   <a href="https://github.com/CarlosSalasMacias/BiblioTopic">GitHub</a> · Diseñado por <a href="https://orcid.org/0000-0002-1641-1571">Carlos Salas-Macías</a> &amp;
   <a href="https://orcid.org/0000-0002-9555-0392">Karime Montes-Escobar</a></footer>
-<script type="module" src="js/app.js?v=20261131"></script>
+<script type="module" src="js/app.js?v=20261132"></script>
 </body>
 </html>
