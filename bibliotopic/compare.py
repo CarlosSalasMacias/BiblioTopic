@@ -51,13 +51,47 @@ def bh_adjust(p):
     return q
 
 
-def topic_trends(theta, years, min_docs_year=10, exclude_years=(), alpha=0.05, test="mann_kendall"):
+def mk_hamed_rao(x, y, sen_slope, alpha=0.05):
+    """Mann-Kendall modificado por autocorrelación (Hamed y Rao, 1998): la varianza de S se multiplica por
+    n/n* = 1 + 2/(n(n-1)(n-2)) Σ (n-k)(n-k-1)(n-k-2) r_k, con r_k las autocorrelaciones significativas (5 %) de
+    los rangos de la serie sin tendencia (restando la pendiente de Sen). Devuelve (p, factor n/n*)."""
+    y = np.asarray(y, float)
+    x = np.asarray(x, float)
+    n = len(y)
+    if n < 4 or np.ptp(y) == 0:
+        return 1.0, 1.0
+    S = sum(np.sign(y[j] - y[i]) for i in range(n - 1) for j in range(i + 1, n))
+    _, ties = np.unique(y, return_counts=True)
+    var0 = (n * (n - 1) * (2 * n + 5) - np.sum(ties * (ties - 1) * (2 * ties + 5))) / 18.0
+    r = stats.rankdata(y - sen_slope * x)
+    r = r - r.mean()
+    den = np.sum(r ** 2)
+    lim = stats.norm.ppf(1 - alpha / 2) / np.sqrt(n)
+    acc = 0.0
+    for k in range(1, n - 1):
+        rk = np.sum(r[:-k] * r[k:]) / den if den > 0 else 0.0
+        if abs(rk) > lim:
+            acc += (n - k) * (n - k - 1) * (n - k - 2) * rk
+    factor = 1 + 2 * acc / (n * (n - 1) * (n - 2))
+    if factor <= 0:
+        factor = 1.0
+    var = var0 * factor
+    if var <= 0:
+        return 1.0, float(factor)
+    z = (S - np.sign(S)) / np.sqrt(var)
+    return float(2 * (1 - stats.norm.cdf(abs(z)))), float(factor)
+
+
+def topic_trends(theta, years, min_docs_year=10, exclude_years=(), alpha=0.05, test="mann_kendall_hr"):
     """Tendencia de la prevalencia media anual de cada tema.
 
     - Regresión lineal (OLS; Griffiths & Steyvers, 2004): pendiente con IC 95 %.
     - Mann-Kendall (tau de Kendall frente al año) con pendiente de Sen (Theil-Sen) e IC 95 %: no paramétrico.
+    - Mann-Kendall modificado por autocorrelación (Hamed y Rao, 1998): las prevalencias anuales suelen estar
+      autocorrelacionadas, lo que infla los falsos positivos del Mann-Kendall clásico.
     - Benjamini-Hochberg sobre todos los temas para cada prueba. La clasificación (Hot / Cold / «No significant
-      trend») usa la q de la prueba elegida en test ("mann_kendall", por defecto, u "ols").
+      trend») usa la q de la prueba elegida en test: "mann_kendall_hr" (por defecto), "mann_kendall" u "ols".
+      En las pruebas de Mann-Kendall, la dirección es la de la pendiente de Sen.
     - Solo años con al menos min_docs_year documentos (en corpus pequeños el mínimo se rebaja a la mitad, hasta 1,
       hasta tener 3 años); con menos de 3 años la tendencia es «Not estimable». exclude_years: p. ej., el año en
       curso, incompleto. Las tendencias describen el corpus recuperado y son exploratorias."""
@@ -83,22 +117,26 @@ def topic_trends(theta, years, min_docs_year=10, exclude_years=(), alpha=0.05, t
                 tau, p_mk = stats.kendalltau(x, y)
                 sen = stats.theilslopes(y, x, 0.95)
                 sen_s, sen_lo, sen_hi = sen[0], sen[2], sen[3]
+                p_hr, fac = mk_hamed_rao(x, y, sen_s)
             else:
-                tau, p_mk, sen_s, sen_lo, sen_hi = 0.0, 1.0, 0.0, 0.0, 0.0
+                tau, p_mk, sen_s, sen_lo, sen_hi, p_hr, fac = 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0
             rows.append((r.slope, r.stderr, r.slope - h, r.slope + h, p_ols, tau,
-                         p_mk if np.isfinite(p_mk) else 1.0, sen_s, sen_lo, sen_hi))
+                         p_mk if np.isfinite(p_mk) else 1.0, sen_s, sen_lo, sen_hi, p_hr, fac))
         else:
-            rows.append((np.nan,) * 10)
+            rows.append((np.nan,) * 12)
     out = pd.DataFrame(rows, columns=["Slope", "SE", "CI low", "CI high", "p-value", "Kendall tau",
-                                      "MK p-value", "Sen slope", "Sen CI low", "Sen CI high"])
+                                      "MK p-value", "Sen slope", "Sen CI low", "Sen CI high",
+                                      "MK p-value (Hamed-Rao)", "Autocorrelation factor n/n*"])
     out["q-value (BH)"] = bh_adjust(out["p-value"].values)
     out["MK q-value (BH)"] = bh_adjust(out["MK p-value"].values)
+    out["MK q-value (Hamed-Rao, BH)"] = bh_adjust(out["MK p-value (Hamed-Rao)"].values)
     out["Years used"] = n_years
-    q = out["MK q-value (BH)"] if test == "mann_kendall" else out["q-value (BH)"]
-    direction = out["Sen slope"] if test == "mann_kendall" else out["Slope"]
+    q = {"mann_kendall": out["MK q-value (BH)"], "mann_kendall_hr": out["MK q-value (Hamed-Rao, BH)"]}.get(
+        test, out["q-value (BH)"])
+    direction = out["Sen slope"] if test.startswith("mann_kendall") else out["Slope"]
     out["Trend"] = np.where(out["p-value"].isna(), NOT_ESTIMABLE,
                             np.where(q < alpha, np.where(direction > 0, HOT, COLD), NO_TREND))
-    out["Test"] = "Mann-Kendall" if test == "mann_kendall" else "OLS"
+    out["Test"] = {"mann_kendall": "Mann-Kendall", "mann_kendall_hr": "Mann-Kendall (Hamed-Rao)"}.get(test, "OLS")
     out.attrs.update(min_docs_year=thr, n_years=n_years, alpha=alpha, test=test,
                      years=(int(m.index.min()), int(m.index.max())) if n_years else None,
                      excluded_years=[int(y) for y in exclude_years])
@@ -124,7 +162,7 @@ def _representative(lda, bert, titles):
 
 
 def compare(lda, bert, years, min_docs_year=10, tau_strong=0.5, tau_partial=0.3, exclude_years=(), titles=None,
-            n_perm=0, seed=42, trend_test="ols", alpha=0.05, n_boot=1000):
+            n_perm=0, seed=42, trend_test="mann_kendall_hr", alpha=0.05, n_boot=1000):
     S = similarity_matrix(lda, bert)
     J = jaccard_matrix(lda, bert)
     r, c = linear_sum_assignment(-S.values)
@@ -151,6 +189,8 @@ def compare(lda, bert, years, min_docs_year=10, tau_strong=0.5, tau_partial=0.3,
             "Cosine null p (permutation)": round(float(null["p"][i, j]), 4) if null else np.nan,
             "Cosine null 95th percentile": round(float(null["p95_pair"][i, j]), 3) if null else np.nan,
             "Above chance": ("Yes" if null["p"][i, j] < 0.05 else "No") if null else "",
+            "Re-matched null p": round(float(null["p_rematched"][i, j]), 4) if null else np.nan,
+            "Above re-matched null": ("Yes" if null["p_rematched"][i, j] < 0.05 else "No") if null else "",
             "TRI": round(tri, 3) if np.isfinite(tri) else np.nan,
             "TRI 95% CI": (lambda ci: f"[{ci[0]:.3f}, {ci[1]:.3f}]" if np.isfinite(ci[0]) else "")(
                 tri_pair_ci(s, reps_l[:, i], reps_b[:, j], n_boot, seed))
@@ -257,5 +297,8 @@ def strategic_map(theta, df, trends, labels):
     tcy = (df["TC"].fillna(0).values / age)
     w = theta / (theta.sum(axis=0, keepdims=True) + 1e-12)
     impact = (w * tcy[:, None]).sum(axis=0)
-    return pd.DataFrame({"Topic": labels, "Growth (slope)": trends["Slope"].values,
+    sen = str(trends["Test"].iloc[0]).startswith("Mann-Kendall") if "Test" in trends and len(trends) else False
+    gcol, gval = (("Growth (Sen slope)", trends["Sen slope"].values) if sen and "Sen slope" in trends
+                  else ("Growth (slope)", trends["Slope"].values))
+    return pd.DataFrame({"Topic": labels, gcol: gval, "Trend": trends["Trend"].values,
                          "Impact (citations/year)": impact, "Prevalence": theta.mean(axis=0)})

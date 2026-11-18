@@ -50,7 +50,7 @@ BASE = dict(
     period_mode="width", period_width=5, n_periods=5, custom_periods="", top_countries=15,
     tau_strong=0.5, tau_partial=0.3, min_docs_year=10, synonyms="", citation_source="max",
     keep_unknown_language=True, keep_unknown_type=True, keep_unknown_year=True, exclude_incomplete_year=True,
-    trend_test="mann_kendall", alpha=0.05, umap_metric="cosine", umap_neighbors=15, umap_components=5,
+    trend_test="mann_kendall_hr", alpha=0.05, umap_metric="cosine", umap_neighbors=15, umap_components=5,
     umap_min_dist=0.0, embedding_model="Xenova/all-MiniLM-L6-v2",
     search_scopus="", search_wos="", search_date="", wos_indexes=[],
     export_tiff=True, cluster_shape="hull", composite=True, palette="auto", palette_variant=None,

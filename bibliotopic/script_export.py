@@ -211,7 +211,8 @@ def _params_md(c, k):
                 "salvo que se indique otro valor"),
         ("Estabilidad", f"LDA {c.get('n_stab_lda')} semillas; BERTopic {c.get('n_stab_bert')} semillas de UMAP"),
         ("Bootstrap / permutaciones", f"{c.get('n_boot')} remuestreos ({c.get('boot_method')}) / {c.get('n_perm')}"),
-        ("Tendencias", "Mann-Kendall con pendiente de Sen" if c.get("trend_test") == "mann_kendall" else "regresión lineal"),
+        ("Tendencias", {"mann_kendall_hr": "Mann-Kendall corregido por autocorrelación (Hamed-Rao) con pendiente de Sen",
+                        "mann_kendall": "Mann-Kendall con pendiente de Sen"}.get(c.get("trend_test"), "regresión lineal")),
         ("Frecuencia documental", f"mínima {c.get('min_df')}, máxima {c.get('max_df')}"),
         ("Semilla global", c.get("seed")),
     ]

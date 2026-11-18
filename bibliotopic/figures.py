@@ -358,9 +358,18 @@ def contingency(path, cont, title):
     return _save(fig, path)
 
 
+def _slope_cols(t):
+    """Pendiente coherente con la prueba de la clasificación: Sen (Mann-Kendall) u OLS (regresión)."""
+    test = str(t["Test"].iloc[0]) if "Test" in t and len(t) else "OLS"
+    if test.startswith("Mann-Kendall") and "Sen slope" in t:
+        return "Sen slope", "Sen CI low", "Sen CI high", "Sen slope of annual prevalence\n(×100) with 95% CI"
+    return "Slope", "CI low", "CI high", "OLS slope of annual prevalence\n(×100) with 95% CI"
+
+
 def trends(path, tl, tb, lda_labels, bert_labels):
-    """Pendiente de la prevalencia anual por tema con IC 95 %. Rojo/azul: tendencia significativa tras
-    corregir por pruebas múltiples (BH); gris: sin tendencia detectada; los no estimables se omiten."""
+    """Pendiente de la prevalencia anual por tema con IC 95 %: la de Sen si la clasificación usa Mann-Kendall,
+    la de la regresión si usa OLS (la pendiente mostrada y el color siempre provienen de la misma prueba).
+    Color: tendencia significativa tras BH; gris: sin tendencia detectada; los no estimables se omiten."""
     panels = [(t, labs, name) for t, labs, name in
               [(tl, lda_labels, "LDA"), (tb, bert_labels, "BERTopic")]
               if t is not None and t["Slope"].notna().any()]
@@ -370,38 +379,43 @@ def trends(path, tl, tb, lda_labels, bert_labels):
     fig, axes = plt.subplots(1, len(panels), figsize=(4.6 * len(panels), 0.3 * n + 1.9))
     axes = np.atleast_1d(axes)
     for ax, (t, labs, name) in zip(axes, panels):
-        idx = np.where(t["Slope"].notna().values)[0]
-        order = idx[np.argsort(t["Slope"].values[idx])]
+        sc, lc, hc, xlabel = _slope_cols(t)
+        idx = np.where(t[sc].notna().values)[0]
+        order = idx[np.argsort(t[sc].values[idx])]
         cols = [col("increase") if t["Trend"][i] == "Hot" else col("decrease") if t["Trend"][i] == "Cold" else col("neutral")
                 for i in order]
-        sl = t["Slope"].values[order] * 100
+        sl = t[sc].values[order] * 100
         err = None
-        if "CI low" in t:
-            lo, hi = t["CI low"].values[order] * 100, t["CI high"].values[order] * 100
-            err = np.vstack([sl - lo, hi - sl])
+        if lc in t:
+            lo, hi = t[lc].values[order] * 100, t[hc].values[order] * 100
+            err = np.vstack([np.clip(sl - lo, 0, None), np.clip(hi - sl, 0, None)])
         ax.barh([wrap(labs[i], 34) for i in order], sl, color=cols, xerr=err,
                 error_kw=dict(ecolor="#444444", elinewidth=0.6, capsize=1.5))
         ax.axvline(0, color=GREY, lw=0.6)
         if len(panels) > 1:
             ax.set_title(name)
-        ax.set_xlabel("Slope of annual prevalence (×100) with 95% CI")
+        ax.set_xlabel(xlabel)
         ax.tick_params(axis="y", labelsize=6.5)
     handles = [plt.Rectangle((0, 0), 1, 1, color=c_) for c_ in (col("increase"), col("decrease"), col("neutral"))]
-    fig.legend(handles, ["Increasing (q < 0.05)", "Decreasing (q < 0.05)", "No significant trend"],
-               loc="lower center", ncol=3, frameon=False, fontsize=7.5, bbox_to_anchor=(0.5, -0.01))
-    fig.tight_layout(rect=(0, 0.05, 1, 1))
+    test = str(panels[0][0]["Test"].iloc[0]) if "Test" in panels[0][0] else "OLS"
+    fig.legend(handles, ["Increasing", "Decreasing", "No significant trend"],
+               loc="lower center", ncol=3, frameon=False, fontsize=7.5, bbox_to_anchor=(0.5, 0.0),
+               title=f"{test} test, Benjamini-Hochberg q < 0.05", title_fontsize=7.5)
+    fig.tight_layout(rect=(0, 0.08, 1, 1), w_pad=3.0)
     return _save(fig, path)
 
 
 def strategic(path, sm, title):
     fig, ax = plt.subplots(figsize=(7, 5.5))
-    x, y = sm["Growth (slope)"] * 100, sm["Impact (citations/year)"]
+    gcol = "Growth (Sen slope)" if "Growth (Sen slope)" in sm else "Growth (slope)"
+    x, y = sm[gcol] * 100, sm["Impact (citations/year)"]
     ax.scatter(x, y, s=60 + 3000 * sm["Prevalence"], color=col("primary"), alpha=0.55, ec="white")
     ax.axvline(0, color=GREY, lw=0.7, ls="--")
     ax.axhline(np.median(y), color=GREY, lw=0.7, ls="--")
     for xi, yi, l in zip(x, y, sm["Topic"]):
         ax.text(xi, yi, " " + l.split(":")[0], fontsize=7.5)
-    ax.set_xlabel("Growth: slope of annual prevalence (×100)")
+    ax.set_xlabel("Growth: " + ("Sen slope" if gcol == "Growth (Sen slope)" else "OLS slope")
+                  + " of annual prevalence (×100)")
     ax.set_ylabel("Impact: mean citations per year")
     return _save(fig, path)
 

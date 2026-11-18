@@ -209,3 +209,29 @@ def test_tri_expert_correlation_ci_and_paired_difference():
     d = r["facts"][("TRI-Mean stability", "interpretability")]
     assert d["lo"] <= d["diff"] <= d["hi"]
     assert len(r["table"]) == 5
+
+
+def test_hamed_rao_and_agreement_jackknife_and_rematched_null():
+    from bibliotopic.compare import mk_hamed_rao
+    from bibliotopic.stats import bootstrap_agreement, permutation_null_cosine
+    from scipy import stats as sst
+    from sklearn.metrics import normalized_mutual_info_score, adjusted_rand_score
+    rng = np.random.default_rng(0)
+    # Hamed-Rao: serie con autocorrelación positiva -> p mayor (más conservador) que el MK clásico
+    x = np.arange(30.0)
+    e = np.zeros(30)
+    for i in range(1, 30):
+        e[i] = 0.8 * e[i - 1] + rng.normal()
+    y = 0.03 * x + e
+    p_hr, fac = mk_hamed_rao(x, y, sst.theilslopes(y, x)[0])
+    assert 0 <= p_hr <= 1 and fac > 0
+    # ARI/NMI: el IC (jackknife delete-d) contiene siempre la estimación puntual
+    a = rng.integers(0, 6, 400)
+    b = np.where(rng.random(400) < 0.6, a, rng.integers(0, 6, 400))
+    r = bootstrap_agreement(a, b, B=200)
+    assert r["NMI"][0] <= normalized_mutual_info_score(a, b) <= r["NMI"][1]
+    assert r["ARI"][0] <= adjusted_rand_score(a, b) <= r["ARI"][1]
+    # nula re-emparejada: más estricta que la nula por par
+    A, B = rng.random((5, 60)), rng.random((5, 60))
+    nu = permutation_null_cosine(A, B, n_perm=200)
+    assert nu["p95_rematched"] >= nu["p95_global"] and nu["p_rematched"].shape == (5, 5)

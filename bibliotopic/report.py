@@ -53,6 +53,8 @@ REFS = {
     "spearman": "Spearman, C. (1904). The proof and measurement of association between two things. The American Journal of Psychology, 15(1), 72–101. https://doi.org/10.2307/1412159",
     "greene": "Greene, D., O'Callaghan, D., & Cunningham, P. (2014). How many topics? Stability analysis for topic models. In Machine Learning and Knowledge Discovery in Databases (ECML PKDD 2014) (pp. 498–513). Springer. https://doi.org/10.1007/978-3-662-44848-9_32",
     "mann45": "Mann, H. B. (1945). Nonparametric tests against trend. Econometrica, 13(3), 245–259. https://doi.org/10.2307/1907187",
+    "shaowu89": "Shao, J., & Wu, C. F. J. (1989). A general theory for jackknife variance estimation. The Annals of Statistics, 17(3), 1176–1197. https://doi.org/10.1214/aos/1176347263",
+    "hamed98": "Hamed, K. H., & Rao, A. R. (1998). A modified Mann-Kendall trend test for autocorrelated data. Journal of Hydrology, 204(1–4), 182–196. https://doi.org/10.1016/S0022-1694(97)00125-X",
     "sen68": "Sen, P. K. (1968). Estimates of the regression coefficient based on Kendall's tau. Journal of the American Statistical Association, 63(324), 1379–1389. https://doi.org/10.1080/01621459.1968.10480934",
     "fleiss": "Fleiss, J. L. (1971). Measuring nominal scale agreement among many raters. Psychological Bulletin, 76(5), 378–382. https://doi.org/10.1037/h0031619",
     "kessler": "Kessler, M. M. (1963). Bibliographic coupling between scientific papers. American Documentation, 14(1), 10–25. https://doi.org/10.1002/asi.5090140103",
@@ -282,7 +284,7 @@ CITE_NAMES = {
     "efron": "Efron y Tibshirani, 1993", "greene": "Greene et al., 2014", "belford18": "Belford et al., 2018",
     "hosseiny23": "Hosseiny Marani y Baumer, 2023", "glaser17": "Gläser et al., 2017", "velden17": "Velden et al., 2017",
     "magsarjav25": "Magsarjav et al., 2025", "spearman": "Spearman, 1904", "mann45": "Mann, 1945",
-    "sen68": "Sen, 1968", "fleiss": "Fleiss, 1971", "kessler": "Kessler, 1963", "efron87": "Efron, 1987", "bh": "Benjamini y Hochberg, 1995", "mann": "Mann y Whitney, 1947", "chang": "Chang et al., 2009",
+    "sen68": "Sen, 1968", "hamed98": "Hamed y Rao, 1998", "shaowu89": "Shao y Wu, 1989", "fleiss": "Fleiss, 1971", "kessler": "Kessler, 1963", "efron87": "Efron, 1987", "bh": "Benjamini y Hochberg, 1995", "mann": "Mann y Whitney, 1947", "chang": "Chang et al., 2009",
     "hayes": "Hayes y Krippendorff, 2007", "callon": "Callon et al., 1991", "cobo": "Cobo et al., 2011",
     "small": "Small, 1973", "montazeri": "Montazeri et al., 2023",
 }
@@ -306,9 +308,9 @@ FIG_CAPTIONS = {
     "hj_bert": "HJ-Biplot of periods (squares, joined chronologically) and BERTopic topics (vectors). Colours and {shapes}: topic clusters (Ward linkage; number of clusters selected by silhouette among non-overlapping solutions).",
     "sim": "Cosine similarity between LDA and BERTopic topics; white boxes mark the optimal one-to-one matching.",
     "cont": "Document-level agreement: proportion of documents of each LDA dominant topic assigned to each BERTopic topic.",
-    "trends": "Linear trend of the annual prevalence of each topic (slope with 95% confidence interval). Red: increasing; blue: decreasing (Benjamini-Hochberg q < 0.05); grey: no statistically significant trend. Exploratory description of the retrieved corpus.",
+    "trends": "Trend in the annual prevalence of each topic: Sen slope with its 95% confidence interval (OLS slope if the linear test was chosen). Colours follow the trend classification (Mann-Kendall test corrected for autocorrelation, Hamed-Rao, with Benjamini-Hochberg q < 0.05): warm, increasing; cool, decreasing; grey, no statistically significant trend. The slope interval is not adjusted for autocorrelation or multiple testing, so it may exclude zero for a topic without a significant trend. Exploratory description of the retrieved corpus.",
     "hj_country": "HJ-Biplot of the most productive countries (points, coloured by country cluster) and LDA topics (vectors, coloured by topic cluster); {shapes} enclose the country clusters (Ward linkage; number of clusters selected by silhouette among non-overlapping solutions).",
-    "strategic": "Strategic map of LDA topics: growth (slope) versus impact (citations per year); bubble size: prevalence.",
+    "strategic": "Strategic map of LDA topics: growth (Sen slope of annual prevalence, the same estimator used to classify trends) versus impact (citations per year); bubble size: prevalence.",
     "callon": "Thematic map of keyword clusters (Callon centrality and density, rank-scaled); bubble size: occurrences.",
     "sankey": "Thematic evolution of keyword clusters across periods; flow width proportional to the inclusion index.",
     "cocit": "Co-citation network of the most cited references. Node size: local citations; colours: Louvain communities.",
@@ -328,7 +330,7 @@ TAB_CAPTIONS = {
     "T9_topic_alignment": ("Alignment between LDA and BERTopic topics (Hungarian matching).",
                            "TRI: Topic Robustness Index = cosine × √(stability_LDA × stability_BERTopic)."),
     "T8b_inference": ("Statistical comparison of LDA and BERTopic (95% confidence intervals).",
-                      "Coherence: bootstrap over topics; agreement (ARI, NMI): bootstrap over documents; stability: "
+                      "Coherence: bootstrap over topics; agreement (ARI, NMI): delete-d jackknife over documents; stability: "
                       "t-based CI over topics; tests: two-sided Mann-Whitney U on per-topic values (r = |Z|/√N)."),
     "T10_most_cited": ("Most cited documents in the corpus.", None),
     "T11_thematic_map": ("Thematic clusters of author keywords (Callon centrality and density).", None),
@@ -684,10 +686,20 @@ def build(R, path, meta, sections=None):
                            "registros incompletos" if ex else "")
                         + (f". Además, se aplicó la prueba no paramétrica de Mann-Kendall {cite('mann45')} con la "
                            f"pendiente de Sen {cite('sen68')} y su intervalo de confianza del 95 %"
-                           if cfg.get("trend_test") == "mann_kendall" else "")
+                           if str(cfg.get("trend_test", "")).startswith("mann_kendall") else "")
+                        + (f"; como las prevalencias anuales pueden estar autocorrelacionadas, la varianza del "
+                           f"estadístico de Mann-Kendall se corrigió con el método de Hamed y Rao {cite('hamed98')}, "
+                           "que usa las autocorrelaciones significativas de los rangos de la serie sin tendencia. "
+                           "Las figuras de tendencias y el mapa estratégico muestran la pendiente de Sen, la misma "
+                           "prueba con la que se clasifican los temas"
+                           if cfg.get("trend_test") == "mann_kendall_hr" else
+                           (". Las figuras de tendencias y el mapa estratégico muestran la pendiente de Sen"
+                            if cfg.get("trend_test") == "mann_kendall" else ""))
                         + ". Los valores p de cada prueba se ajustaron por pruebas múltiples sobre todos los temas con "
                         f"el procedimiento de Benjamini-Hochberg {cite('bh')}; los temas con q < {cfg.get('alpha', 0.05)} "
-                        + ("en la prueba de Mann-Kendall" if cfg.get("trend_test") == "mann_kendall" else "en la regresión")
+                        + ({"mann_kendall": "en la prueba de Mann-Kendall",
+                            "mann_kendall_hr": "en la prueba de Mann-Kendall corregida por autocorrelación"}.get(
+                               cfg.get("trend_test"), "en la regresión"))
                         + " se clasificaron como emergentes o en declive según el signo de la pendiente, y los demás "
                         "como sin tendencia significativa. "
                         "Cuando menos de tres años alcanzaron el mínimo de documentos, la tendencia se consideró no "
@@ -727,7 +739,10 @@ def build(R, path, meta, sections=None):
                 "uno), lo que permite identificar pares forzados por el emparejamiento uno a uno"
                 + (f". Como línea base nula, la similitud de cada par se comparó con la distribución obtenida en "
                    f"{f(cfg.get('n_perm'), 0)} permutaciones de los pesos del vocabulario de los temas de BERTopic "
-                   "(valor p por permutación y percentil 95 nulo)" if cfg.get("n_perm") else "")
+                   "(valor p por permutación y percentil 95 nulo). Como el algoritmo húngaro selecciona las parejas "
+                   "más similares, se aplicó además una línea base más estricta: en cada permutación se repitió el "
+                   "emparejamiento y cada par observado se comparó con la distribución de los cosenos emparejados "
+                   "bajo la nula" if cfg.get("n_perm") else "")
                 + ". (iii) Coincidencia a nivel de documento: índice de Rand ajustado "
                 f"(ARI) {cite('hubert')} e información mutua normalizada (NMI) {cite('strehl')} entre el tema "
                 "dominante de LDA y el tema asignado por BERTopic, calculados por separado para todos los documentos "
@@ -768,10 +783,14 @@ def build(R, path, meta, sections=None):
                 f"{f(cfg['n_boot'], 0)} remuestreos. Para la coherencia NPMI media de cada modelo y su diferencia "
                 "se remuestrearon los temas (cada tema es una observación, igual que en la prueba U de Mann-Whitney); "
                 "no se remuestrearon documentos porque duplicar y omitir documentos altera las co-ocurrencias y sesga "
-                "a la baja el NPMI de los términos poco frecuentes. Para los índices ARI y NMI se remuestrearon los "
-                "documentos"
-                + (" (la aceleración se estimó con un jackknife que omite un tema cada vez para la coherencia y con un "
-                   "jackknife agrupado de 100 bloques de documentos para ARI y NMI)" if bca else "")
+                "a la baja el NPMI de los términos poco frecuentes. Para los índices ARI y NMI tampoco se usó el "
+                "bootstrap con reemplazo, porque las copias de un mismo documento coinciden en ambas particiones e "
+                "inflan la concordancia; el intervalo se obtuvo con un jackknife delete-d "
+                f"{cite('shaowu89')}: {f(cfg['n_boot'], 0)} submuestras sin reemplazo de la mitad de los documentos, "
+                "error típico corregido por el tamaño de la submuestra e intervalo normal centrado en la estimación "
+                "con todos los documentos"
+                + (" (en BCa, la aceleración de la coherencia se estimó con un jackknife que omite un tema cada vez)"
+                   if bca else "")
                 + ". Las estimaciones puntuales se calcularon con todos los documentos y son las que se informan en "
                 "todas las tablas y en el texto; el bootstrap solo aporta el intervalo. Para la "
                 "estabilidad media se usaron intervalos basados en la distribución t sobre los temas. Las "
@@ -1078,6 +1097,11 @@ def build(R, path, meta, sections=None):
                 extra.append(f"{int((pr['Above chance'] == 'Yes').sum())} de {len(pr)} pares superaron la similitud "
                              f"esperada por azar (permutación, p < 0.05; percentil 95 nulo global = "
                              f"{f(C['null']['p95_global'], 3)})" if C.get("null") else "")
+                if "Above re-matched null" in mt and mt["Above re-matched null"].isin(["Yes", "No"]).any() and C.get("null"):
+                    rr = mt[mt["Above re-matched null"].isin(["Yes", "No"])]
+                    extra.append(f"frente a la línea base re-emparejada, más estricta (percentil 95 de los cosenos "
+                                 f"emparejados bajo la nula = {f(C['null'].get('p95_rematched', np.nan), 3)}), "
+                                 f"{int((rr['Above re-matched null'] == 'Yes').sum())} de {len(rr)} pares la superaron")
             sens = T.get("tau_sensitivity")
             if sens is not None and len(sens):
                 extra.append(f"al variar los umbrales, el número de pares convergentes osciló entre "

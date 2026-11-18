@@ -174,38 +174,50 @@ def _agreement_from_counts(C):
 
 
 def bootstrap_agreement(a, b, B=1000, seed=42, method="percentile"):
-    """IC 95 % de ARI y NMI remuestreando documentos. Devuelve {"ARI": (lo, hi), "NMI": (lo, hi)}.
-    Cada réplica se calcula con la tabla de contingencia ponderada por las veces que sale cada documento
-    (idéntico a remuestrear filas y más rápido en el navegador)."""
+    """IC 95 % de ARI y NMI con jackknife delete-d por submuestreo sin reemplazo (Shao y Wu, 1989).
+
+    No se usa el bootstrap con reemplazo: al duplicar documentos, ambas particiones coinciden en las copias y
+    ARI/NMI se inflan, hasta dejar la estimación puntual fuera de su intervalo. En su lugar se toman B
+    submuestras de la mitad de los documentos (m = n/2, sin reemplazo), se estima el error típico
+    EE = √[(m/(n−m)) · var(θ_m)] y el intervalo es θ̂ ± 1.96·EE (centrado en la estimación con todos los
+    documentos y recortado al rango del índice). method se ignora (compatibilidad).
+    Devuelve {"ARI": (lo, hi), "NMI": (lo, hi), "method": "delete-d jackknife"}."""
     rng = np.random.default_rng(seed)
     a, b = np.asarray(a), np.asarray(b)
     n = len(a)
+    ari0, nmi0 = adjusted_rand_score(a, b), normalized_mutual_info_score(a, b)
+    if n < 10:
+        return {"ARI": (np.nan, np.nan), "NMI": (np.nan, np.nan), "method": "delete-d jackknife"}
     ua, ia = np.unique(a, return_inverse=True)
     ub, ib = np.unique(b, return_inverse=True)
-    code = ia * len(ub) + ib
+    code = (ia * len(ub) + ib).astype(np.intp)
     shape = (len(ua), len(ub))
+    m = n // 2
 
     def stat(w):
-        C = np.bincount(code.astype(np.intp), weights=w, minlength=shape[0] * shape[1]).reshape(shape)
+        C = np.bincount(code, weights=w, minlength=shape[0] * shape[1]).reshape(shape)
         C = C[C.sum(axis=1) > 0][:, C.sum(axis=0) > 0]
         return _agreement_from_counts(C)
 
     ari, nmi = [], []
-    for _ in range(B):
-        r = stat(np.bincount(rng.integers(0, n, n).astype(np.intp), minlength=n).astype(np.float64))
+    for _ in range(int(B)):
+        w = np.zeros(n)
+        w[rng.choice(n, m, replace=False)] = 1.0
+        r = stat(w)
         ari.append(r[0])
         nmi.append(r[1])
-    jack_a = jack_n = None
-    if method == "bca":
-        jack_a, jack_n = [], []
-        for g in _groups(n, seed=seed):
-            keep = np.ones(n)
-            keep[g] = 0.0
-            r = stat(keep)
-            jack_a.append(r[0])
-            jack_n.append(r[1])
-    return {"ARI": ci_from_boot(ari, adjusted_rand_score(a, b), method, jack_a),
-            "NMI": ci_from_boot(nmi, normalized_mutual_info_score(a, b), method, jack_n)}
+    fac = m / (n - m)
+    z = stats.norm.ppf(0.975)
+
+    def ci(v, point, lo_b, hi_b):
+        v = np.asarray(v, float)
+        v = v[np.isfinite(v)]
+        if len(v) < 10:
+            return (np.nan, np.nan)
+        se = np.sqrt(fac * v.var(ddof=1))
+        return (float(max(lo_b, point - z * se)), float(min(hi_b, point + z * se)))
+
+    return {"ARI": ci(ari, ari0, -1.0, 1.0), "NMI": ci(nmi, nmi0, 0.0, 1.0), "method": "delete-d jackknife"}
 
 
 def mean_ci(v, level=0.95, bounds=None):
@@ -280,7 +292,7 @@ def inference_table(corpus, lda, bert, B=1000, seed=42, method="percentile"):
             out.append({"Metric": f"Document agreement {metric} ({pop})", "LDA (95% CI)": "",
                         "BERTopic (95% CI)": f"{fn(a_, b_):.3f} [{ci[metric][0]:.3f}, {ci[metric][1]:.3f}]",
                         "Mann-Whitney U": "", "p-value": "", "Effect size r": "",
-                        "Note": f"n = {n_:,} documents; {lab} bootstrap over documents"})
+                        "Note": f"n = {n_:,} documents; delete-d jackknife CI (half-samples without replacement)"})
     facts = {"coh": coh, "stab_lda": st_l, "stab_bert": st_b, "t_coh": t_coh, "t_stab": t_st, "agr": agr,
              "agr_clustered": agr_ok, "n_all": n_all, "n_clustered": n_ok, "method": method, "B": B}
     return pd.DataFrame(out), facts
@@ -318,17 +330,24 @@ def permutation_null_cosine(A, B, n_perm=1000, seed=42):
         return None
     rng = np.random.default_rng(seed)
     An = A / (np.linalg.norm(A, axis=1, keepdims=True) + 1e-12)
+    from scipy.optimize import linear_sum_assignment
     ge = np.zeros_like(obs)
     null_all = np.empty((n_perm, *obs.shape), dtype=np.float32)
+    matched = []  # nula más estricta: cosenos de los pares que el algoritmo húngaro empareja en cada permutación
     for t in range(n_perm):
         P = np.array([row[rng.permutation(len(row))] for row in B])
         Pn = P / (np.linalg.norm(P, axis=1, keepdims=True) + 1e-12)
         s = An @ Pn.T
         null_all[t] = s
         ge += s >= obs
+        r_, c_ = linear_sum_assignment(-s)
+        matched.append(s[r_, c_])
     p = (ge + 1) / (n_perm + 1)
+    matched = np.sort(np.concatenate(matched))
+    # valor p frente a la nula re-emparejada: proporción de cosenos emparejados bajo la nula ≥ observado
+    p_rm = (len(matched) - np.searchsorted(matched, obs, side="left") + 1) / (len(matched) + 1)
     return {"p": p, "p95_pair": np.percentile(null_all, 95, axis=0), "p95_global": float(np.percentile(null_all, 95)),
-            "n_perm": n_perm}
+            "p_rematched": p_rm, "p95_rematched": float(np.percentile(matched, 95)), "n_perm": n_perm}
 
 
 def _spearman_fast(x, y):

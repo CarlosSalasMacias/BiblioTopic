@@ -85,6 +85,17 @@ repetir con la versión 2 los análisis hechos con la versión 1.
 | **Punto de control automático** al terminar LDA y BERTopic (se guarda en el navegador). Si algo falla después, al recargar la página aparece «Recuperar el último análisis», que solo repite las figuras y tablas. | Un fallo al final ya no obliga a repetir horas de modelado. |
 | Aviso si el análisis no informa avances durante 10 min, errores visibles en el panel de progreso y **tiempo por etapa** al terminar. | Distinguir un análisis lento de uno detenido. |
 
+### Revisión metodológica sugerida por un árbitro (tendencias, ARI/NMI y línea base nula)
+
+| Cambio | Justificación |
+|---|---|
+| La figura de tendencias y el mapa estratégico muestran la **pendiente de Sen** con su IC (la de OLS solo si se elige la regresión); la leyenda indica la prueba usada. | Antes se dibujaba la pendiente lineal coloreada según Mann-Kendall: estimador y prueba no coincidían. |
+| **Mann-Kendall corregido por autocorrelación (Hamed y Rao, 1998)**, por defecto para clasificar las tendencias (el clásico y OLS siguen como opciones); se informan ambos p y el factor de corrección. Verificado con `pymannkendall`. | Las prevalencias anuales están autocorrelacionadas y el Mann-Kendall clásico da falsos positivos. |
+| IC de **ARI y NMI con jackknife delete-d** (submuestras sin reemplazo de la mitad de los documentos; Shao y Wu, 1989), centrado en la estimación. | El bootstrap con reemplazo duplica documentos, que coinciden en ambas particiones e inflan la concordancia: la estimación quedaba fuera de su intervalo. |
+| **Línea base nula re-emparejada**: en cada permutación se repite el emparejamiento húngaro y cada par se compara con la distribución de los cosenos emparejados bajo la nula (columnas «Re-matched null p» y «Above re-matched null»). | La nula por par no tiene en cuenta que el algoritmo húngaro elige las parejas más similares; la re-emparejada es más estricta. |
+
+No se automatizan (son decisiones de análisis que se hacen con las opciones existentes): bajar `min_cluster_size` cuando hay muchos outliers en BERTopic y la sensibilidad a otro K de LDA («Fijar K»).
+
 ### Índice de Robustez Temática (TRI): fundamentación y primera validación
 
 | Cambio | Justificación |
