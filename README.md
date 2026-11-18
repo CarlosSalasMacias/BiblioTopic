@@ -8,7 +8,7 @@ tablas y un borrador del artículo (Métodos, Resultados y, opcionalmente, Discu
 Todo se ejecuta en el navegador: los archivos no se suben a ningún servidor y no hace falta instalar nada.
 Se recomienda Chrome o Edge actualizados y una computadora con al menos 8 GB de RAM.
 
-**Versión 2.0.0** (para publicación en revistas Q1). Los cambios, su justificación y la tabla de valores por
+**Versión 2.1.0** (para publicación en revistas Q1). Los cambios, su justificación y la tabla de valores por
 defecto nuevos frente a los anteriores están en [CHANGELOG.md](CHANGELOG.md). Las configuraciones de la versión 1
 (`config.json` sin `config_version`) siguen ejecutándose con sus valores originales.
 
@@ -157,11 +157,12 @@ Si usa BiblioTopic, cite la versión que utilizó con su DOI de Zenodo (ver «Ci
 archivo `CITATION.cff`):
 
 > Salas-Macías, C. A., & Montes-Escobar, K. (2026). *BiblioTopic: Browser-based bibliometrics and comparative
-> topic modelling (LDA and BERTopic) for Web of Science and Scopus corpora* (Versión 2.0.0) [Software]. Zenodo.
+> topic modelling (LDA and BERTopic) for Web of Science and Scopus corpora* (Versión 2.1.0) [Software]. Zenodo.
 > https://doi.org/10.5281/zenodo.XXXXXXX
 
 **Autores:** Carlos Alfredo Salas-Macías¹ ² ([ORCID 0000-0002-1641-1571](https://orcid.org/0000-0002-1641-1571)) y
 Karime Montes-Escobar² ³ ([ORCID 0000-0002-9555-0392](https://orcid.org/0000-0002-9555-0392)).
+Autor de correspondencia: Carlos Alfredo Salas-Macías (carlos.salas@utm.edu.ec).
 
 ¹ Laboratorio Funcionamiento de Agroecosistemas y Cambio Climático-FAGROCLIM, Departamento de Ciencias Agronómicas, Facultad de Ingenierías Agroambientales, Universidad Técnica de Manabí, Lodana 130401, Manabí, Ecuador.
 ² Centro de Investigación y Desarrollo en Ciencias de la Ingeniería-CIDCI, Escuela de Ciencias Digitales y Tecnologías Avanzadas, Facultad de Ingeniería, Ciencia y Tecnología, Universidad Bernardo O’Higgins, Santiago 8370993, Chile.
@@ -170,7 +171,7 @@ Karime Montes-Escobar² ³ ([ORCID 0000-0002-9555-0392](https://orcid.org/0000-0
 ### Publicar una versión con DOI en Zenodo
 
 1. En https://zenodo.org/account/settings/github/ active el repositorio `CarlosSalasMacias/BiblioTopic`.
-2. En GitHub cree una *release* (por ejemplo `v2.0.0`) desde *Releases → Draft a new release*.
+2. En GitHub cree una *release* (por ejemplo `v2.1.0`) desde *Releases → Draft a new release*.
 3. Zenodo archiva la versión y asigna un DOI; añada ese DOI a este README y al texto de disponibilidad.
 
 ## Estructura

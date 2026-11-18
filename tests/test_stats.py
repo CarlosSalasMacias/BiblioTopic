@@ -279,3 +279,23 @@ def test_broker_key_survives_js_roundtrip():
     spec = {"kind": "beta", "k": 5, "seed": 43, "params": {"tol": 0.001, "stab_subsample": 0.0, "max_iter": 100.0}}
     js = {"kind": "beta", "k": 5, "seed": 43, "params": {"tol": 0.001, "stab_subsample": 0, "max_iter": 100}}  # JS
     assert JobBroker.key(spec) == JobBroker.key(js)
+
+
+def test_cocitation_merges_given_name_variants():
+    import pandas as pd
+    from bibliotopic.citations import cocitation, ref_key
+    assert ref_key("González, J., Title (2010) J") == "Gonzalez J, 2010"
+    df = pd.DataFrame({"CR": ["DaMatta FM, 2004, BRAZ J PLANT PHYSL, V18; Smith A, 2000, X",
+                              "DaMatta Fábio M, 2004, BRAZ J PLANT PHYSL; Smith A, 2000, X"]})
+    nodes, edges, tab = cocitation(df, 10)
+    assert dict(nodes)["Damatta FM, 2004"] == 2
+    assert not any("Fabio" in k for k, _ in nodes)
+
+
+def test_rematched_null_p_floor():
+    import numpy as np
+    from bibliotopic.stats import permutation_null_cosine
+    rng = np.random.default_rng(0)
+    A = rng.random((4, 50)); B = A + 0.01 * rng.random((4, 50))
+    r = permutation_null_cosine(A, B, n_perm=99, seed=1)
+    assert r["p_rematched"].min() >= 1 / 100 - 1e-12

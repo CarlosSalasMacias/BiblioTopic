@@ -39,7 +39,7 @@ ANALYSES = {
     "thematic": "Mapa temático de Callon y evolución temática (Sankey)",
 }
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 CONFIG_VERSION = 2
 
 # Valores comunes a ambos perfiles

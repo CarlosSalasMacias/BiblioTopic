@@ -346,6 +346,9 @@ def permutation_null_cosine(A, B, n_perm=1000, seed=42):
     matched = np.sort(np.concatenate(matched))
     # valor p frente a la nula re-emparejada: proporción de cosenos emparejados bajo la nula ≥ observado
     p_rm = (len(matched) - np.searchsorted(matched, obs, side="left") + 1) / (len(matched) + 1)
+    # los cosenos emparejados de una misma permutación no son independientes: la resolución del valor p es la del
+    # número de permutaciones, así que el mínimo notificable es 1/(n_perm + 1), igual que en la nula por par
+    p_rm = np.maximum(p_rm, 1.0 / (n_perm + 1))
     return {"p": p, "p95_pair": np.percentile(null_all, 95, axis=0), "p95_global": float(np.percentile(null_all, 95)),
             "p_rematched": p_rm, "p95_rematched": float(np.percentile(matched, 95)), "n_perm": n_perm}
 

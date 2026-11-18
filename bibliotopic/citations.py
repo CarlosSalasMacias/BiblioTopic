@@ -103,13 +103,44 @@ def ref_key(ref: str) -> str | None:
     else:  # Scopus: «De Souza, J.»
         sur = " ".join(parts)
         ini = re.sub(r"[^A-Z]", "", segs[1])[:2] if len(segs) > 1 else ""
+    sur = _fold(sur)  # WoS escribe los apellidos sin tildes: «Gonzalez» y «González» son la misma clave
     sur = " ".join(w.capitalize() if not ("-" in w) else "-".join(x.capitalize() for x in w.split("-"))
                    for w in sur.split())
     return f"{sur} {ini[:2]}, {year}".replace("  ", " ")
 
 
+def _fold(t: str) -> str:
+    import unicodedata
+    return "".join(ch for ch in unicodedata.normalize("NFKD", t) if not unicodedata.combining(ch))
+
+
+def _canonical(keys) -> dict:
+    """Une variantes de la misma referencia: «Damatta Fabio M, 2004» (nombre de pila completo leído como parte
+    del apellido) se asigna a «Damatta FM, 2004» si esa clave existe. Se prueba cada corte del apellido y las
+    palabras sobrantes se reducen a iniciales."""
+    ks = set(keys)
+    out = {}
+    for k in ks:
+        m = re.match(r"^(.*) ([A-Z]{1,3}), (\d{4})$", k)
+        if not m:
+            continue
+        words, ini, yr = m.group(1).split(), m.group(2), m.group(3)
+        for cut in range(len(words) - 1, 0, -1):
+            cand = f"{' '.join(words[:cut])} {(''.join(w[0] for w in words[cut:]) + ini)[:2].upper()}, {yr}"
+            if cand != k and cand in ks:
+                out[k] = cand
+                break
+    return out
+
+
+def _ref_sets(df: pd.DataFrame):
+    raw = df["CR"].fillna("").map(lambda s: {k for k in (ref_key(x) for x in s.split(";")) if k})
+    alias = _canonical(set().union(*raw) if len(raw) else set())
+    return raw.map(lambda rs: {alias.get(k, k) for k in rs})
+
+
 def cocitation(df: pd.DataFrame, top=40):
-    refs = df["CR"].fillna("").map(lambda s: sorted({k for k in (ref_key(x) for x in s.split(";")) if k}))
+    refs = _ref_sets(df).map(sorted)
     freq = Counter(itertools.chain.from_iterable(refs))
     keep = {k for k, _ in freq.most_common(top)}
     edges = Counter()
@@ -125,7 +156,7 @@ def bibliographic_coupling(df: pd.DataFrame, top=40, min_refs=1):
     """Acoplamiento bibliográfico (Kessler, 1963) entre los documentos más citados del corpus: dos documentos
     están acoplados si comparten referencias citadas; el peso es el número de referencias compartidas.
     Devuelve (nodos [(documento, citas)], aristas {(a, b): peso}, tabla de los pares más acoplados)."""
-    refs = df["CR"].fillna("").map(lambda s: {k for k in (ref_key(x) for x in s.split(";")) if k})
+    refs = _ref_sets(df)
     d = df.assign(_refs=refs, _tc=df["TC"].fillna(0))
     d = d[d["_refs"].map(len) >= min_refs].sort_values("_tc", ascending=False).head(top)
     names = [short_ref(r) for _, r in d.iterrows()]

@@ -1,5 +1,80 @@
 # Registro de cambios
 
+## 2.1.0 — Revisión metodológica (2026-11-18)
+
+Cambios posteriores a la 2.0.0, a partir de las observaciones de árbitros. `run_config.json` registra la versión con la que se ejecutó cada análisis.
+
+### Correcciones de esta versión
+
+- La leyenda de la figura de tendencias nombra la prueba que realmente clasificó los temas (Mann-Kendall con corrección de Hamed-Rao, Mann-Kendall clásico u OLS); antes decía siempre Hamed-Rao.
+- Valor p frente a la nula re-emparejada: su mínimo es 1/(n_perm + 1), como en la nula por par (los cosenos emparejados de una misma permutación no son independientes). Ya no puede redondearse a 0.
+- Co-citación: las variantes de un mismo autor se unen («DaMatta FM» y «DaMatta, Fábio M.» → «Damatta FM»), y los apellidos se comparan sin tildes, porque WoS los escribe sin ellas.
+
+### Corrección: la última etapa se quedaba bloqueada en el navegador
+
+| Cambio | Justificación |
+|---|---|
+| El bootstrap de la coherencia NPMI y de la concordancia ARI/NMI se calcula con pesos por documento (veces que sale cada documento en la réplica) sobre matrices dispersas, en lugar de copiar y multiplicar matrices densas en cada réplica. Los resultados son idénticos (comprobado: mismas estimaciones e intervalos; ARI/NMI iguales a scikit-learn hasta 10⁻¹⁶). | En Python nativo la multiplicación densa usa BLAS optimizado y tarda segundos, pero el navegador no lo tiene: con ~7 600 documentos y 1000 réplicas, «Generando figuras y tablas» pasaba de ~1 min a más de 30 min y, en portátiles, parecía bloqueado. Ahora es ~30 veces más rápido también en Python. |
+| Barra de **progreso total** con tiempo transcurrido y **tiempo restante** (estimado al empezar y corregido con la velocidad real del equipo); avance dentro de la última etapa (figura a figura, permutaciones, bootstrap). | Antes solo se veía el avance de la etapa actual y la última etapa no informaba nada. |
+| **Punto de control automático** al terminar LDA y BERTopic (se guarda en el navegador). Si algo falla después, al recargar la página aparece «Recuperar el último análisis», que solo repite las figuras y tablas. | Un fallo al final ya no obliga a repetir horas de modelado. |
+| Aviso si el análisis no informa avances durante 10 min, errores visibles en el panel de progreso y **tiempo por etapa** al terminar. | Distinguir un análisis lento de uno detenido. |
+
+### Revisión metodológica sugerida por un árbitro (tendencias, ARI/NMI y línea base nula)
+
+| Cambio | Justificación |
+|---|---|
+| La figura de tendencias y el mapa estratégico muestran la **pendiente de Sen** con su IC (la de OLS solo si se elige la regresión); la leyenda indica la prueba usada. | Antes se dibujaba la pendiente lineal coloreada según Mann-Kendall: estimador y prueba no coincidían. |
+| **Mann-Kendall corregido por autocorrelación (Hamed y Rao, 1998)**, por defecto para clasificar las tendencias (el clásico y OLS siguen como opciones); se informan ambos p y el factor de corrección. Verificado con `pymannkendall`. | Las prevalencias anuales están autocorrelacionadas y el Mann-Kendall clásico da falsos positivos. |
+| IC de **ARI y NMI con jackknife delete-d** (submuestras sin reemplazo de la mitad de los documentos; Shao y Wu, 1989), centrado en la estimación. | El bootstrap con reemplazo duplica documentos, que coinciden en ambas particiones e inflan la concordancia: la estimación quedaba fuera de su intervalo. |
+| **Línea base nula re-emparejada**: en cada permutación se repite el emparejamiento húngaro y cada par se compara con la distribución de los cosenos emparejados bajo la nula (columnas «Re-matched null p» y «Above re-matched null»). | La nula por par no tiene en cuenta que el algoritmo húngaro elige las parejas más similares; la re-emparejada es más estricta. |
+
+No se automatiza la sensibilidad a otro K de LDA (p. ej., K = número de temas de BERTopic): duplicaría el tiempo de LDA y se hace con «Fijar K». La sensibilidad a `min_cluster_size` sí se automatizó (abajo).
+
+### Segunda revisión: sensibilidad, comparabilidad y redacción
+
+| Cambio | Justificación |
+|---|---|
+| **Sensibilidad a `min_cluster_size`** (tabla `bert_mcs_sensitivity`): se repite HDBSCAN sobre la misma proyección UMAP con el valor elegido, ½ y ¼; para cada uno, grupos nativos, temas, % de outliers, NPMI, estabilidad (hasta 5 réplicas) y ARI/NMI con LDA. Opción en BERTopic (activada). | Con un 33 % de outliers, un árbitro pedirá ver qué ocurre con grupos más pequeños sin tener que repetir el análisis. |
+| Reasignaciones de **baja confianza** en la tabla de métricas (% de outliers reasignados y de baja confianza) y por tema en la tabla de BERTopic. | Se calculaban por documento, pero no aparecían en ninguna tabla. |
+| `bert_trends`: el análisis «solo documentos agrupados» incluye pendiente de Sen con IC, q de la prueba usada y la prueba. | Antes solo tenía la pendiente OLS, distinta de la prueba principal. |
+| **Submuestreo en las réplicas de estabilidad** (opción; 0 = solo semilla): cada réplica de LDA y de BERTopic usa además un submuestreo sin reemplazo de documentos. El texto indica qué varía en cada modelo. | En BERTopic solo cambia la semilla de UMAP (embeddings y HDBSCAN son deterministas), en LDA se reestima el modelo: el submuestreo añade la misma perturbación de datos a ambos. La fórmula del TRI no cambia. |
+| **Sensibilidad de tendencias** (tablas `lda_trend_sensitivity`, `bert_trend_sensitivity`): clasificación con solo los años con ≥ N documentos (por defecto 30) y con una regresión ponderada por documentos por año. Se omite si el umbral más exigente no deja 3 años. | Los años con pocos documentos dan medias ruidosas. |
+| Terminología opcional **creciente/decreciente** (Increasing/Decreasing) en lugar de emergente/en declive (Hot/Cold), en tablas y texto. | Petición de revisores: «emergente» sugiere novedad, no solo aumento. |
+| El texto de tendencias informa la **pendiente y la q de la prueba con la que se clasificó** (Sen y Hamed-Rao por defecto), en puntos porcentuales por año. | Antes citaba la pendiente y la q de OLS aunque la clasificación fuera de Mann-Kendall. |
+| **Concordancia de tendencias**: desglose (creciente en ambos, sin tendencia en ambos, decreciente en ambos, discordantes) y **kappa de Cohen**; se aclara que se calcula sobre los pares convergentes o parciales. | El porcentaje solo no distingue acuerdo por azar. |
+| Correspondencias muchos a uno con su propio **TRI** («Best-match TRI») y el número de temas que comparten la misma mejor correspondencia. | Permite valorar las correspondencias que el emparejamiento uno a uno descarta. |
+| Validación por expertos: **alfa de Krippendorff** en la misma tabla (T12), aviso de **efecto techo** cuando todos los temas de un modelo tienen la puntuación máxima, y la estabilidad del par se identifica como **media geométrica** en T12b. | Claridad de la tabla y de la interpretación. |
+| Línea base nula: el texto indica que el menor p posible es 1/(permutaciones + 1) y se informa como p ≤ ese valor. | Con 1000 permutaciones, «p < 0.001» no es alcanzable. |
+| Co-citación: apellidos con partícula (De, Da, Van, Von, Le…) completos y referencias anónimas agrupadas por fuente («Anonymous [FAOSTAT], 2014»); sin fuente se excluyen. | Aparecían nodos como «De, 2013» y «Anonymous, 2014». |
+| Periodos: opción para que los periodos de ancho fijo empiecen en el primer año con ≥ N documentos (los anteriores forman un periodo inicial). El texto describe el primer periodo cuando agrupa muchos años y advierte que el último incluye el año incompleto. | El primer periodo agrupaba 72 años sin explicarlo. |
+| Informe: tablas y figuras **numeradas por orden de primera cita** (dos pasadas); Resultados distingue el corpus bibliométrico y el de modelado con su n en cada apartado. | Requisito de Elsevier; antes la descripción general daba el n del corpus de modelado junto a estadísticas del bibliométrico. |
+
+### Índice de Robustez Temática (TRI): fundamentación y primera validación
+
+| Cambio | Justificación |
+|---|---|
+| Métodos sitúa el TRI en la literatura: combina la estabilidad frente a la reinicialización (Greene et al., 2014; Belford et al., 2018; Hosseiny Marani y Baumer, 2023) con la comparación entre métodos sin verdad de referencia habitual en cienciometría (Gläser et al., 2017; Velden et al., 2017), y explica por qué la repetibilidad sola no basta (Magsarjav et al., 2025). | Una búsqueda bibliográfica (Consensus y SciSpace, ~300 registros) no encontró un índice por par de temas que combine la similitud entre modelos de distinta naturaleza con la estabilidad entre semillas; sí trabajos que usan cada criterio por separado. |
+| Con la validación por expertos cargada, nueva tabla «TRI frente a la valoración de los expertos»: correlación de Spearman, sobre los pares emparejados, entre el TRI y la interpretabilidad, la coherencia y la precisión de la palabra intrusa del par, comparada con la del coseno solo y la estabilidad sola. Texto en Métodos y Resultados. | Primera validación empírica del índice, sin depender de umbrales. |
+| El TRI de cada par se informa con 3 decimales en Resultados. | Regla de decimales para índices. |
+| Cada ρ de la tabla «TRI frente a la valoración de los expertos» lleva su IC 95 % (bootstrap percentil sobre los pares), y se añaden las diferencias ρ(TRI) − ρ(estabilidad) y ρ(TRI) − ρ(coseno) con bootstrap pareado e IC 95 %; Métodos y Resultados lo informan e indican si la diferencia es distinta de cero. | Las correlaciones comparten datos y el TRI contiene la estabilidad: no son independientes y no deben compararse solo por su valor puntual (en el corpus del café, 0.517 frente a 0.615 con unos 26 pares). |
+
+### Corrección metodológica: intervalo de confianza de la coherencia NPMI
+
+| Cambio | Justificación |
+|---|---|
+| El IC 95 % de la coherencia NPMI media de cada modelo y de su diferencia se obtiene por bootstrap **sobre los temas** (cada tema es una observación; se remuestrean los temas de cada modelo de forma independiente). BCa usa el jackknife que omite un tema; su valor p es el menor nivel al que el intervalo BCa excluye el 0. ARI y NMI siguen remuestreando documentos. | Al remuestrear documentos, duplicar unos y omitir otros altera las co-ocurrencias y sesga a la baja el NPMI de los términos poco frecuentes: en el corpus del café, el NPMI de BERTopic (0.218) quedaba fuera de su propio IC [0.153, 0.202] y el BCa daba un intervalo degenerado. Con temas como unidad, el intervalo contiene la estimación ([0.149, 0.292]) y es coherente con la prueba U de Mann-Whitney, que también compara temas. Los intervalos son más anchos: reflejan la incertidumbre real con el número de temas disponible. |
+
+### Paleta de colores de las figuras
+
+| Cambio | Justificación |
+|---|---|
+| Una sola paleta por artículo para todas las figuras (barras, mapas de calor, mapa de colaboración, redes, biplots, mapa temático, Sankey, PRISMA). Los temas de BERTopic conservan su color en el gráfico de términos y en el mapa de documentos. | Antes cada figura usaba su propio esquema (viridis, magma, Blues, tab20…) y un mismo tema podía cambiar de color. |
+| Seis paletas (Tierra, Océano, Salud, Tecnología, Sociedad, Clásica), con dos variantes cada una, y elección **automática según la temática** (ecuaciones y términos de búsqueda y las 50 palabras clave más frecuentes). La variante depende del propio corpus. Selector en la interfaz con vista previa; al cambiarla después del análisis solo se vuelven a dibujar las figuras. Se registra en `run_config.json` (`figure_palette`). | Dos artículos distintos no deben tener figuras idénticas. |
+| Todas las paletas están validadas: 8 colores categóricos en orden fijo con separación suficiente para daltonismo (protanopía y deuteranopía, ΔE ≥ 8 en OKLab entre colores contiguos) y con visión normal (ΔE ≥ 15), y escalas secuenciales de un solo tono con luminosidad monótona. | Muchas revistas exigen figuras legibles para lectores con daltonismo. |
+
+No cambia el tiempo de análisis: los colores solo intervienen al dibujar.
+
+
 ## 2.0.0 — Versión para publicación (revistas Q1)
 
 Dos objetivos: que la importación no sesgue el corpus sin avisar y que los valores por defecto sean los adecuados
@@ -75,70 +150,6 @@ iteraciones (el valor de la versión 1) no converge en corpus de este tamaño: s
 modelo convergido (coseno medio 0.44–0.55) y su NPMI es mucho menor (0.03–0.05 frente a 0.11–0.15). Por eso el
 perfil «Exploración rápida» usa ahora batch con 30 iteraciones (coseno 0.99 con el modelo convergido) y conviene
 repetir con la versión 2 los análisis hechos con la versión 1.
-
-### Corrección: la última etapa se quedaba bloqueada en el navegador
-
-| Cambio | Justificación |
-|---|---|
-| El bootstrap de la coherencia NPMI y de la concordancia ARI/NMI se calcula con pesos por documento (veces que sale cada documento en la réplica) sobre matrices dispersas, en lugar de copiar y multiplicar matrices densas en cada réplica. Los resultados son idénticos (comprobado: mismas estimaciones e intervalos; ARI/NMI iguales a scikit-learn hasta 10⁻¹⁶). | En Python nativo la multiplicación densa usa BLAS optimizado y tarda segundos, pero el navegador no lo tiene: con ~7 600 documentos y 1000 réplicas, «Generando figuras y tablas» pasaba de ~1 min a más de 30 min y, en portátiles, parecía bloqueado. Ahora es ~30 veces más rápido también en Python. |
-| Barra de **progreso total** con tiempo transcurrido y **tiempo restante** (estimado al empezar y corregido con la velocidad real del equipo); avance dentro de la última etapa (figura a figura, permutaciones, bootstrap). | Antes solo se veía el avance de la etapa actual y la última etapa no informaba nada. |
-| **Punto de control automático** al terminar LDA y BERTopic (se guarda en el navegador). Si algo falla después, al recargar la página aparece «Recuperar el último análisis», que solo repite las figuras y tablas. | Un fallo al final ya no obliga a repetir horas de modelado. |
-| Aviso si el análisis no informa avances durante 10 min, errores visibles en el panel de progreso y **tiempo por etapa** al terminar. | Distinguir un análisis lento de uno detenido. |
-
-### Revisión metodológica sugerida por un árbitro (tendencias, ARI/NMI y línea base nula)
-
-| Cambio | Justificación |
-|---|---|
-| La figura de tendencias y el mapa estratégico muestran la **pendiente de Sen** con su IC (la de OLS solo si se elige la regresión); la leyenda indica la prueba usada. | Antes se dibujaba la pendiente lineal coloreada según Mann-Kendall: estimador y prueba no coincidían. |
-| **Mann-Kendall corregido por autocorrelación (Hamed y Rao, 1998)**, por defecto para clasificar las tendencias (el clásico y OLS siguen como opciones); se informan ambos p y el factor de corrección. Verificado con `pymannkendall`. | Las prevalencias anuales están autocorrelacionadas y el Mann-Kendall clásico da falsos positivos. |
-| IC de **ARI y NMI con jackknife delete-d** (submuestras sin reemplazo de la mitad de los documentos; Shao y Wu, 1989), centrado en la estimación. | El bootstrap con reemplazo duplica documentos, que coinciden en ambas particiones e inflan la concordancia: la estimación quedaba fuera de su intervalo. |
-| **Línea base nula re-emparejada**: en cada permutación se repite el emparejamiento húngaro y cada par se compara con la distribución de los cosenos emparejados bajo la nula (columnas «Re-matched null p» y «Above re-matched null»). | La nula por par no tiene en cuenta que el algoritmo húngaro elige las parejas más similares; la re-emparejada es más estricta. |
-
-No se automatiza la sensibilidad a otro K de LDA (p. ej., K = número de temas de BERTopic): duplicaría el tiempo de LDA y se hace con «Fijar K». La sensibilidad a `min_cluster_size` sí se automatizó (abajo).
-
-### Segunda revisión: sensibilidad, comparabilidad y redacción
-
-| Cambio | Justificación |
-|---|---|
-| **Sensibilidad a `min_cluster_size`** (tabla `bert_mcs_sensitivity`): se repite HDBSCAN sobre la misma proyección UMAP con el valor elegido, ½ y ¼; para cada uno, grupos nativos, temas, % de outliers, NPMI, estabilidad (hasta 5 réplicas) y ARI/NMI con LDA. Opción en BERTopic (activada). | Con un 33 % de outliers, un árbitro pedirá ver qué ocurre con grupos más pequeños sin tener que repetir el análisis. |
-| Reasignaciones de **baja confianza** en la tabla de métricas (% de outliers reasignados y de baja confianza) y por tema en la tabla de BERTopic. | Se calculaban por documento, pero no aparecían en ninguna tabla. |
-| `bert_trends`: el análisis «solo documentos agrupados» incluye pendiente de Sen con IC, q de la prueba usada y la prueba. | Antes solo tenía la pendiente OLS, distinta de la prueba principal. |
-| **Submuestreo en las réplicas de estabilidad** (opción; 0 = solo semilla): cada réplica de LDA y de BERTopic usa además un submuestreo sin reemplazo de documentos. El texto indica qué varía en cada modelo. | En BERTopic solo cambia la semilla de UMAP (embeddings y HDBSCAN son deterministas), en LDA se reestima el modelo: el submuestreo añade la misma perturbación de datos a ambos. La fórmula del TRI no cambia. |
-| **Sensibilidad de tendencias** (tablas `lda_trend_sensitivity`, `bert_trend_sensitivity`): clasificación con solo los años con ≥ N documentos (por defecto 30) y con una regresión ponderada por documentos por año. Se omite si el umbral más exigente no deja 3 años. | Los años con pocos documentos dan medias ruidosas. |
-| Terminología opcional **creciente/decreciente** (Increasing/Decreasing) en lugar de emergente/en declive (Hot/Cold), en tablas y texto. | Petición de revisores: «emergente» sugiere novedad, no solo aumento. |
-| El texto de tendencias informa la **pendiente y la q de la prueba con la que se clasificó** (Sen y Hamed-Rao por defecto), en puntos porcentuales por año. | Antes citaba la pendiente y la q de OLS aunque la clasificación fuera de Mann-Kendall. |
-| **Concordancia de tendencias**: desglose (creciente en ambos, sin tendencia en ambos, decreciente en ambos, discordantes) y **kappa de Cohen**; se aclara que se calcula sobre los pares convergentes o parciales. | El porcentaje solo no distingue acuerdo por azar. |
-| Correspondencias muchos a uno con su propio **TRI** («Best-match TRI») y el número de temas que comparten la misma mejor correspondencia. | Permite valorar las correspondencias que el emparejamiento uno a uno descarta. |
-| Validación por expertos: **alfa de Krippendorff** en la misma tabla (T12), aviso de **efecto techo** cuando todos los temas de un modelo tienen la puntuación máxima, y la estabilidad del par se identifica como **media geométrica** en T12b. | Claridad de la tabla y de la interpretación. |
-| Línea base nula: el texto indica que el menor p posible es 1/(permutaciones + 1) y se informa como p ≤ ese valor. | Con 1000 permutaciones, «p < 0.001» no es alcanzable. |
-| Co-citación: apellidos con partícula (De, Da, Van, Von, Le…) completos y referencias anónimas agrupadas por fuente («Anonymous [FAOSTAT], 2014»); sin fuente se excluyen. | Aparecían nodos como «De, 2013» y «Anonymous, 2014». |
-| Periodos: opción para que los periodos de ancho fijo empiecen en el primer año con ≥ N documentos (los anteriores forman un periodo inicial). El texto describe el primer periodo cuando agrupa muchos años y advierte que el último incluye el año incompleto. | El primer periodo agrupaba 72 años sin explicarlo. |
-| Informe: tablas y figuras **numeradas por orden de primera cita** (dos pasadas); Resultados distingue el corpus bibliométrico y el de modelado con su n en cada apartado. | Requisito de Elsevier; antes la descripción general daba el n del corpus de modelado junto a estadísticas del bibliométrico. |
-
-### Índice de Robustez Temática (TRI): fundamentación y primera validación
-
-| Cambio | Justificación |
-|---|---|
-| Métodos sitúa el TRI en la literatura: combina la estabilidad frente a la reinicialización (Greene et al., 2014; Belford et al., 2018; Hosseiny Marani y Baumer, 2023) con la comparación entre métodos sin verdad de referencia habitual en cienciometría (Gläser et al., 2017; Velden et al., 2017), y explica por qué la repetibilidad sola no basta (Magsarjav et al., 2025). | Una búsqueda bibliográfica (Consensus y SciSpace, ~300 registros) no encontró un índice por par de temas que combine la similitud entre modelos de distinta naturaleza con la estabilidad entre semillas; sí trabajos que usan cada criterio por separado. |
-| Con la validación por expertos cargada, nueva tabla «TRI frente a la valoración de los expertos»: correlación de Spearman, sobre los pares emparejados, entre el TRI y la interpretabilidad, la coherencia y la precisión de la palabra intrusa del par, comparada con la del coseno solo y la estabilidad sola. Texto en Métodos y Resultados. | Primera validación empírica del índice, sin depender de umbrales. |
-| El TRI de cada par se informa con 3 decimales en Resultados. | Regla de decimales para índices. |
-| Cada ρ de la tabla «TRI frente a la valoración de los expertos» lleva su IC 95 % (bootstrap percentil sobre los pares), y se añaden las diferencias ρ(TRI) − ρ(estabilidad) y ρ(TRI) − ρ(coseno) con bootstrap pareado e IC 95 %; Métodos y Resultados lo informan e indican si la diferencia es distinta de cero. | Las correlaciones comparten datos y el TRI contiene la estabilidad: no son independientes y no deben compararse solo por su valor puntual (en el corpus del café, 0.517 frente a 0.615 con unos 26 pares). |
-
-### Corrección metodológica: intervalo de confianza de la coherencia NPMI
-
-| Cambio | Justificación |
-|---|---|
-| El IC 95 % de la coherencia NPMI media de cada modelo y de su diferencia se obtiene por bootstrap **sobre los temas** (cada tema es una observación; se remuestrean los temas de cada modelo de forma independiente). BCa usa el jackknife que omite un tema; su valor p es el menor nivel al que el intervalo BCa excluye el 0. ARI y NMI siguen remuestreando documentos. | Al remuestrear documentos, duplicar unos y omitir otros altera las co-ocurrencias y sesga a la baja el NPMI de los términos poco frecuentes: en el corpus del café, el NPMI de BERTopic (0.218) quedaba fuera de su propio IC [0.153, 0.202] y el BCa daba un intervalo degenerado. Con temas como unidad, el intervalo contiene la estimación ([0.149, 0.292]) y es coherente con la prueba U de Mann-Whitney, que también compara temas. Los intervalos son más anchos: reflejan la incertidumbre real con el número de temas disponible. |
-
-### Paleta de colores de las figuras
-
-| Cambio | Justificación |
-|---|---|
-| Una sola paleta por artículo para todas las figuras (barras, mapas de calor, mapa de colaboración, redes, biplots, mapa temático, Sankey, PRISMA). Los temas de BERTopic conservan su color en el gráfico de términos y en el mapa de documentos. | Antes cada figura usaba su propio esquema (viridis, magma, Blues, tab20…) y un mismo tema podía cambiar de color. |
-| Seis paletas (Tierra, Océano, Salud, Tecnología, Sociedad, Clásica), con dos variantes cada una, y elección **automática según la temática** (ecuaciones y términos de búsqueda y las 50 palabras clave más frecuentes). La variante depende del propio corpus. Selector en la interfaz con vista previa; al cambiarla después del análisis solo se vuelven a dibujar las figuras. Se registra en `run_config.json` (`figure_palette`). | Dos artículos distintos no deben tener figuras idénticas. |
-| Todas las paletas están validadas: 8 colores categóricos en orden fijo con separación suficiente para daltonismo (protanopía y deuteranopía, ΔE ≥ 8 en OKLab entre colores contiguos) y con visión normal (ΔE ≥ 15), y escalas secuenciales de un solo tono con luminosidad monótona. | Muchas revistas exigen figuras legibles para lectores con daltonismo. |
-
-No cambia el tiempo de análisis: los colores solo intervienen al dibujar.
 
 ### 3. Comparación LDA–BERTopic y TRI
 

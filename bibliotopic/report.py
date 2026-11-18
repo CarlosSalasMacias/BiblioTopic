@@ -309,7 +309,7 @@ FIG_CAPTIONS = {
     "hj_bert": "HJ-Biplot of periods (squares, joined chronologically) and BERTopic topics (vectors). Colours and {shapes}: topic clusters (Ward linkage; number of clusters selected by silhouette among non-overlapping solutions).",
     "sim": "Cosine similarity between LDA and BERTopic topics; white boxes mark the optimal one-to-one matching.",
     "cont": "Document-level agreement: proportion of documents of each LDA dominant topic assigned to each BERTopic topic.",
-    "trends": "Trend in the annual prevalence of each topic: Sen slope with its 95% confidence interval (OLS slope if the linear test was chosen). Colours follow the trend classification (Mann-Kendall test corrected for autocorrelation, Hamed-Rao, with Benjamini-Hochberg q < 0.05): warm, increasing; cool, decreasing; grey, no statistically significant trend. The slope interval is not adjusted for autocorrelation or multiple testing, so it may exclude zero for a topic without a significant trend. Exploratory description of the retrieved corpus.",
+    "trends": "Trend in the annual prevalence of each topic: Sen slope with its 95% confidence interval (OLS slope if the linear test was chosen). Colours follow the trend classification ({trend_test}, with Benjamini-Hochberg q < 0.05): warm, increasing; cool, decreasing; grey, no statistically significant trend. The slope interval is not adjusted for autocorrelation or multiple testing, so it may exclude zero for a topic without a significant trend. Exploratory description of the retrieved corpus.",
     "hj_country": "HJ-Biplot of the most productive countries (points, coloured by country cluster) and LDA topics (vectors, coloured by topic cluster); {shapes} enclose the country clusters (Ward linkage; number of clusters selected by silhouette among non-overlapping solutions).",
     "strategic": "Strategic map of LDA topics: growth (Sen slope of annual prevalence, the same estimator used to classify trends) versus impact (citations per year); bubble size: prevalence.",
     "callon": "Thematic map of keyword clusters (Callon centrality and density, rank-scaled); bubble size: occurrences.",
@@ -1378,7 +1378,10 @@ def _build(R, path, meta, sections=None, order=None):
             if k == "trends" and lda is not None and bert is not None:
                 cap += " Left: LDA; right: BERTopic."
             shapes = "ellipses" if cfg.get("cluster_shape") == "ellipse" else "convex hulls"
-            return cap.replace("{shapes}", shapes)
+            tt = {"mann_kendall_hr": "Mann-Kendall test corrected for autocorrelation, Hamed-Rao",
+                  "mann_kendall": "classical Mann-Kendall test, without autocorrelation correction",
+                  "ols": "t-test of the OLS slope"}.get(cfg.get("trend_test"), "Mann-Kendall test")
+            return cap.replace("{shapes}", shapes).replace("{trend_test}", tt)
         for k in W.fig_entries:
             if k in comps:
                 cap = " ".join(f"({chr(97 + i)}) {cap_of(pk)}" for i, pk in enumerate(comps[k]))

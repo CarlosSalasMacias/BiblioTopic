@@ -180,7 +180,7 @@ class LdaPool {
     });
     const tries = [];
     for (let i = 0; i < this.n; i++) {
-      tries.push(boot(new Worker(new URL("./lda_worker.js?v=20261132", import.meta.url), { type: "module" })));
+      tries.push(boot(new Worker(new URL("./lda_worker.js?v=20261133", import.meta.url), { type: "module" })));
     }
     const res = await Promise.allSettled(tries);
     this.workers = res.filter((r) => r.status === "fulfilled").map((r) => r.value);
