@@ -1,6 +1,6 @@
 // BiblioTopic — interfaz (hilo principal). El trabajo pesado ocurre en js/worker.js.
 const $ = (id) => document.getElementById(id);
-const worker = new Worker(new URL("./worker.js?v=20261133", import.meta.url), { type: "module" });
+const worker = new Worker(new URL("./worker.js?v=20261134", import.meta.url), { type: "module" });
 const state = { analyses: {}, sections: {}, summary: null, labels: null, busy: false, aiLabels: false, aiModel: "" };
 
 const DEPENDS = { compare: ["lda", "bertopic"], inference: ["compare", "lda", "bertopic"], strategic: ["lda"],
@@ -199,11 +199,55 @@ function showSummary(s) {
   $("o-ymin").value = s.year_min;
   // el año en curso se incluye en los descriptivos; las tendencias y la tasa de crecimiento lo excluyen
   $("o-ymax").value = s.year_max;
+  setupPeriod(s);
   const unk = (f) => Object.values((s.unknown || {})[f] || {}).reduce((a, b) => a + b, 0);
   const unkBy = (f) => Object.entries((s.unknown || {})[f] || {}).map(([k, v]) => `${k}: ${v.toLocaleString()}`).join(" · ");
   chips("o-dt", s.doc_types, ["Article", "Review"], unk("DT"), unkBy("DT"));
   chips("o-la", s.languages, ["English"], unk("LA"), unkBy("LA"));
   $("s-analyses").hidden = false;
+}
+
+// Periodo de análisis: barras de registros por año, año de inicio sugerido (producción continua) y recuento de
+// los registros que quedan dentro y fuera del periodo elegido. El filtro se aplica a todos los análisis.
+function setupPeriod(s) {
+  const yc = Object.fromEntries(Object.entries(s.year_counts || {}).map(([y, n]) => [+y, n]));
+  const years = Object.keys(yc).map(Number);
+  if (!years.length) { $("period-box").hidden = true; return; }
+  $("period-box").hidden = false;
+  const y0 = Math.min(...years), y1 = Math.max(...years), peak = Math.max(...Object.values(yc));
+  const total = Object.values(yc).reduce((a, b) => a + b, 0);
+  const sug = s.year_suggested;
+  const bs = $("b-ysug");
+  bs.hidden = !(sug && sug > y0);
+  if (!bs.hidden) {
+    const before = years.filter((y) => y < sug).reduce((a, y) => a + yc[y], 0);
+    bs.textContent = `Usar periodo sugerido (${sug}–${y1})`;
+    bs.title = `Producción continua desde ${sug}; antes hay ${before.toLocaleString()} registros dispersos`;
+    bs.onclick = () => { $("o-ymin").value = sug; $("o-ymax").value = y1; draw(); requestEstimate(); };
+  }
+  $("b-yall").onclick = () => { $("o-ymin").value = y0; $("o-ymax").value = y1; draw(); requestEstimate(); };
+  function draw() {
+    const lo = num("o-ymin") || y0, hi = num("o-ymax") || y1;
+    const W = 600, H = 70, n = y1 - y0 + 1, bw = W / n;
+    let bars = "";
+    for (let y = y0; y <= y1; y++) {
+      const v = yc[y] || 0, h = v ? Math.max(1.5, (H - 14) * v / peak) : 0;
+      bars += `<rect class="${y >= lo && y <= hi ? "in" : "out"}" x="${((y - y0) * bw).toFixed(2)}" y="${(H - 12 - h).toFixed(2)}" `
+        + `width="${Math.max(0.6, bw - 0.6).toFixed(2)}" height="${h.toFixed(2)}"><title>${y}: ${v.toLocaleString()} registros</title></rect>`;
+    }
+    $("yr-chart").innerHTML = `<svg viewBox="0 0 ${W} ${H - 10}" preserveAspectRatio="none">${bars}</svg>`
+      + `<div class="yr-axis"><span>${y0}</span><span>${y1}</span></div>`;
+    const inn = years.filter((y) => y >= lo && y <= hi).reduce((a, y) => a + yc[y], 0);
+    const bef = years.filter((y) => y < lo).reduce((a, y) => a + yc[y], 0);
+    const aft = years.filter((y) => y > hi).reduce((a, y) => a + yc[y], 0);
+    $("period-note").textContent = `${inn.toLocaleString()} de ${total.toLocaleString()} registros con año quedan en ${lo}–${hi}`
+      + (bef ? ` · ${bef.toLocaleString()} anteriores a ${lo} se excluyen` : "")
+      + (aft ? ` · ${aft.toLocaleString()} posteriores a ${hi} se excluyen` : "")
+      + ". Se aplica a todos los análisis (bibliometría, temas, tendencias y periodos del HJ-Biplot); los recuentos son "
+      + "anteriores a los filtros de tipo de documento e idioma.";
+  }
+  $("o-ymin").oninput = draw; $("o-ymax").oninput = draw;
+  draw();
 }
 
 // Valores del campo + «Sin dato» (registros sin el campo: p. ej., Scopus sin columna de idioma). Los
@@ -426,7 +470,7 @@ function requestEstimate() {
   estTimer = setTimeout(() => { if (!state.busy && state.loaded) worker.postMessage({ cmd: "estimate", cfg: buildCfg() }); }, 400);
 }
 for (const id of ["o-kmin", "o-kmax", "o-kstep", "o-kfine", "o-kseeds", "o-ldamethod", "o-ldaiter", "o-slda", "o-sbert", "o-workers",
-  "o-boot", "o-k", "o-emb", "analyses"]) $(id).addEventListener("change", requestEstimate);
+  "o-boot", "o-k", "o-emb", "analyses", "o-ymin", "o-ymax"]) $(id).addEventListener("change", requestEstimate);
 function showEstimate(e) {
   const fmt = (m) => (m >= 90 ? `${(m / 60).toFixed(1)} h` : `${Math.max(1, Math.round(m))} min`);
   const par = e.n_workers > 1 ? `, ${e.n_workers} procesos en paralelo` : "";
@@ -629,7 +673,7 @@ $("b-ai-translate").onclick = async () => {
   busy(true);
   toast("Traduciendo los nombres al inglés…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261133");
+    const ai = await import("./ai.js?v=20261134");
     const out = await ai.translateLabels(key, inputs.map((i) => i.value), $("m-topic").value.trim());
     out.forEach((t, i) => { if (inputs[i] && t) { setFull(inputs[i].closest(".lrow"), t); inputs[i].closest(".lrow").classList.remove("es"); } });
     state.aiLabels = true;
@@ -648,7 +692,7 @@ $("b-ai-short").onclick = async () => {
   busy(true);
   toast("Pidiendo nombres cortos a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261133");
+    const ai = await import("./ai.js?v=20261134");
     const out = await ai.shortenLabels(key, rows.map((r) => r.querySelector("input.full").value), $("m-topic").value.trim());
     out.forEach((t, i) => {
       const sh = rows[i] && rows[i].querySelector("input.short");
@@ -669,7 +713,7 @@ $("b-ai-labels").onclick = async () => {
   busy(true);
   toast("Pidiendo propuestas de nombres a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261133");
+    const ai = await import("./ai.js?v=20261134");
     const ctx = await getContext();
     const out = await ai.suggestLabels(key, ctx, $("m-topic").value.trim());
     const byId = Object.fromEntries(out.map((t) => [t.id, t]));
@@ -696,7 +740,7 @@ $("b-ai-disc").onclick = async () => {
   out.hidden = false;
   out.textContent = "Redactando la Discusión (puede tardar 1–3 minutos)…";
   try {
-    const ai = await import("./ai.js?v=20261133");
+    const ai = await import("./ai.js?v=20261134");
     const ctx = await getContext();
     const meta = { topic_name: $("m-topic").value.trim() };
     const text = await ai.draftDiscussion(key, ctx, meta, (snap) => { out.textContent = snap; });
@@ -756,7 +800,7 @@ $("b-ai-titles").onclick = async () => {
   busy(true);
   toast("Pidiendo propuestas de título a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261133");
+    const ai = await import("./ai.js?v=20261134");
     const ctx = await getContext();
     const out = await ai.suggestTitles(key, ctx, titleMeta());
     state.aiModel = ai.MODEL;

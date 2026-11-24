@@ -531,6 +531,12 @@ def _build(R, path, meta, sections=None, order=None):
                            for name, k, kind in steps3 if k and kind == "modelling"])
         dfb_ = R.dfb if getattr(R, "dfb", None) is not None else df
         filt = []
+        if cfg.get("year_min") or cfg.get("year_max"):
+            yy = dfb_["PY"].dropna()
+            lo_ = cfg.get("year_min") or (int(yy.min()) if len(yy) else None)
+            hi_ = cfg.get("year_max") or (int(yy.max()) if len(yy) else None)
+            if lo_ and hi_:
+                filt.append(f"año de publicación entre {lo_} y {hi_}")
         if cfg.get("doc_types") and R.availability["DT"] > 0:
             filt.append("tipos de documento " + enum_es(cfg["doc_types"]))
         if cfg.get("languages") and R.availability["LA"] > 0:

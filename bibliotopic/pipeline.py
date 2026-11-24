@@ -273,6 +273,8 @@ class Session:
             "availability": {k: round(100 * v, 1) for k, v in self.availability.items()},
             "with_abstract": int((m["AB"].str.len() > 0).sum()),
             "year_min": int(yrs.min()), "year_max": int(yrs.max()),
+            "year_counts": {str(y): int(n) for y, n in yrs.value_counts().sort_index().items()},
+            "year_suggested": bio.suggest_start_year(yrs.value_counts().to_dict()),
             "doc_types": m["DT"][m["DT"] != ""].value_counts().to_dict(),
             "languages": m["LA"][m["LA"] != ""].value_counts().to_dict(),
             "audit": self.audit,

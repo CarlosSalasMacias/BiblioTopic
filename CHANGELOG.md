@@ -4,6 +4,14 @@
 
 Cambios posteriores a la 2.0.0, a partir de las observaciones de árbitros. `run_config.json` registra la versión con la que se ejecutó cada análisis.
 
+### Periodo de análisis
+
+- Tras cargar y fusionar los archivos, un bloque visible «Periodo de análisis» (antes «Año desde/hasta» estaba oculto en
+  las opciones avanzadas) muestra los registros por año, sugiere un año de inicio (primer año desde el que la
+  producción es continua y cada año tiene al menos máx(2, 1 % del máximo anual) registros) e indica cuántos registros
+  quedan fuera. El periodo se aplica a todos los análisis, figura en el PRISMA y en Métodos como criterio de
+  elegibilidad («año de publicación entre … y …»).
+
 ### Correcciones de esta versión
 
 - La leyenda de la figura de tendencias nombra la prueba que realmente clasificó los temas (Mann-Kendall con corrección de Hamed-Rao, Mann-Kendall clásico u OLS); antes decía siempre Hamed-Rao.

@@ -143,3 +143,12 @@ button.ai { border-color: #8C6BB1; color: #8C6BB1; }
 .bar.big { height: 14px; border-radius: 7px; }
 #recover { margin-top: 10px; }
 #recover button { margin: 0 6px; }
+
+.period { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px 4px; margin: 0 0 12px; }
+.period legend { font-weight: 600; padding: 0 4px; }
+.period-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.period-row input { width: 6.5em; }
+.yr-chart svg { width: 100%; height: 60px; display: block; }
+.yr-chart rect.in { fill: var(--accent); }
+.yr-chart rect.out { fill: var(--line); }
+.yr-axis { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; }

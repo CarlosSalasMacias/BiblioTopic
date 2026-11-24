@@ -299,3 +299,13 @@ def test_rematched_null_p_floor():
     A = rng.random((4, 50)); B = A + 0.01 * rng.random((4, 50))
     r = permutation_null_cosine(A, B, n_perm=99, seed=1)
     assert r["p_rematched"].min() >= 1 / 100 - 1e-12
+
+
+def test_suggest_start_year_skips_sporadic_early_records():
+    from bibliotopic.io import suggest_start_year
+    yc = {1947: 1, 1975: 1, 1988: 2, 1990: 1}
+    yc.update({y: 20 + (y - 1995) * 5 for y in range(1995, 2026)})
+    yc[2026] = 3  # año en curso incompleto: no cuenta
+    assert suggest_start_year(yc) == 1995
+    assert suggest_start_year({2000: 5, 2001: 6, 2002: 7}) == 2000
+    assert suggest_start_year({}) is None

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BiblioTopic</title>
 <meta name="description" content="Bibliometría, LDA, BERTopic y HJ-Biplot sobre corpus de Web of Science y Scopus, con borrador de Métodos y Resultados.">
-<link rel="stylesheet" href="css/style.css?v=20261133">
+<link rel="stylesheet" href="css/style.css?v=20261134">
 </head>
 <body>
 <header>
@@ -86,6 +86,17 @@
   <!-- 2. ANÁLISIS -->
   <section class="card" id="s-analyses" hidden>
     <h2><span class="n">2</span> Análisis a realizar</h2>
+    <fieldset class="period" id="period-box">
+      <legend>Periodo de análisis</legend>
+      <div id="yr-chart" class="yr-chart" role="img" aria-label="Registros por año de publicación"></div>
+      <div class="period-row">
+        <label>Desde <input type="number" id="o-ymin"></label>
+        <label>Hasta <input type="number" id="o-ymax"></label>
+        <button type="button" id="b-ysug" class="secondary" hidden></button>
+        <button type="button" id="b-yall" class="secondary">Todo el periodo</button>
+      </div>
+      <p id="period-note" class="hint"></p>
+    </fieldset>
     <div class="profile-row">
       <label>Perfil
         <select id="o-profile">
@@ -105,8 +116,6 @@
     <details>
       <summary>Opciones avanzadas</summary>
       <div class="grid">
-        <label>Año desde <input type="number" id="o-ymin"></label>
-        <label>Año hasta <input type="number" id="o-ymax"></label>
         <label class="wide">Tipos de documento (vocabulario común WoS/Scopus) <span id="o-dt" class="chips"></span></label>
         <label class="wide">Idiomas (se conserva el registro si alguno de sus idiomas está admitido) <span id="o-la" class="chips"></span></label>
         <label class="wide"><input type="checkbox" id="o-unk-year"> Excluir registros sin año de publicación (por defecto se conservan)</label>
@@ -284,6 +293,6 @@
 <footer class="wrap">BiblioTopic · código abierto en
   <a href="https://github.com/CarlosSalasMacias/BiblioTopic">GitHub</a> · Diseñado por <a href="https://orcid.org/0000-0002-1641-1571">Carlos Salas-Macías</a> &amp;
   <a href="https://orcid.org/0000-0002-9555-0392">Karime Montes-Escobar</a></footer>
-<script type="module" src="js/app.js?v=20261133"></script>
+<script type="module" src="js/app.js?v=20261134"></script>
 </body>
 </html>

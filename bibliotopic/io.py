@@ -387,6 +387,24 @@ def _eligible(values: pd.Series, field: str, allowed) -> pd.Series:
 MIN_ABSTRACT_WORDS = 20
 
 
+def suggest_start_year(year_counts, min_share=0.01, min_docs=2):
+    """Año de inicio sugerido para el periodo de análisis: primer año a partir del cual la producción es continua
+    (ningún año vacío) y cada año tiene al menos max(min_docs, min_share × máximo anual) registros. Evita que unas
+    pocas publicaciones esporádicas antiguas (p. ej., una de 1947 y algunas sueltas hasta 1990) alarguen el eje
+    temporal y las series de tendencias. El último año no se evalúa (suele estar incompleto). Es solo una
+    sugerencia: la decisión es del usuario y queda registrada en la configuración y en el texto de Métodos."""
+    yc = {int(y): int(n) for y, n in dict(year_counts).items() if n}
+    if not yc:
+        return None
+    ys = list(range(min(yc), max(yc) + 1))
+    thr = max(min_docs, min_share * max(yc.values()))
+    start = ys[0]
+    for y in ys[:-1]:
+        if yc.get(y, 0) < thr:
+            start = y + 1
+    return min(start, ys[-1])
+
+
 def apply_filters(df: pd.DataFrame, year_min=None, year_max=None, doc_types=None, languages=None,
                   keep_unknown_type=True, keep_unknown_language=True, keep_unknown_year=True):
     """Criterios de elegibilidad en dos niveles; ningún registro se descarta por un campo ausente.
