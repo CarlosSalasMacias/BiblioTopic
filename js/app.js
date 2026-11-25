@@ -1,6 +1,6 @@
 // BiblioTopic — interfaz (hilo principal). El trabajo pesado ocurre en js/worker.js.
 const $ = (id) => document.getElementById(id);
-const worker = new Worker(new URL("./worker.js?v=20261134", import.meta.url), { type: "module" });
+const worker = new Worker(new URL("./worker.js?v=20261135", import.meta.url), { type: "module" });
 const state = { analyses: {}, sections: {}, summary: null, labels: null, busy: false, aiLabels: false, aiModel: "" };
 
 const DEPENDS = { compare: ["lda", "bertopic"], inference: ["compare", "lda", "bertopic"], strategic: ["lda"],
@@ -424,6 +424,58 @@ $("o-palette").addEventListener("change", (e) => {
   }
 });
 
+// Rellena el formulario con la configuración de un proyecto guardado, para que «Ejecutar análisis» repita el
+// análisis con las mismas opciones salvo las que el usuario cambie (p. ej., el periodo).
+const CFG_FIELDS = {
+  "o-profile": "profile", "q-scopus": "search_scopus", "q-wos": "search_wos", "q-date": "search_date",
+  "o-ymin": "year_min", "o-ymax": "year_max", "o-syn": "synonyms", "o-tc": "citation_source",
+  "o-kmin": "k_min", "o-kmax": "k_max", "o-kstep": "k_step", "o-k": "k", "o-kfine": "k_fine_window",
+  "o-kseeds": "k_seeds", "o-ldamethod": "lda_method", "o-ldaiter": "lda_max_iter", "o-alpha": "lda_doc_prior",
+  "o-eta": "lda_word_prior", "o-emb": "embedding_model", "o-mcs": "min_cluster_size", "o-msamp": "min_samples",
+  "o-othr": "outlier_threshold", "o-slda": "n_stab_lda", "o-sbert": "n_stab_bert", "o-stabsub": "stab_subsample",
+  "o-boot": "n_boot", "o-bootm": "boot_method", "o-perm": "n_perm", "o-tau": "tau_strong", "o-taup": "tau_partial",
+  "o-trend": "trend_test", "o-trendterms": "trend_terms", "o-trendsens": "trend_min_docs_sensitivity",
+  "o-pmode": "period_mode", "o-pw": "period_width", "o-np": "n_periods", "o-pcustom": "custom_periods",
+  "o-pfirst": "first_period_min_docs", "o-mindf": "min_df", "o-seed": "seed", "o-shape": "cluster_shape",
+};
+// campos en los que vacío (o 0) significa «automático»
+const CFG_AUTO = new Set(["k", "lda_doc_prior", "lda_word_prior", "min_cluster_size", "min_samples",
+  "first_period_min_docs", "stab_subsample", "trend_min_docs_sensitivity"]);
+function applyCfg(c) {
+  const setVal = (el, v) => {
+    if (el.tagName === "SELECT" && ![...el.options].some((o) => o.value === String(v))) return;
+    el.value = v;
+  };
+  for (const [id, key] of Object.entries(CFG_FIELDS)) {
+    const el = $(id);
+    if (!el || !(key in c)) continue;
+    const v = c[key];
+    if (v === null || v === undefined) { if (CFG_AUTO.has(key)) el.value = el.type === "number" ? 0 : ""; continue; }
+    setVal(el, Array.isArray(v) ? v.join(", ") : v);
+  }
+  if (Array.isArray(c.query_terms)) { $("o-q").value = c.query_terms.join(", "); qAuto = false; }
+  if (Array.isArray(c.extra_stopwords)) $("o-sw").value = c.extra_stopwords.join(", ");
+  if ("bert_nr_topics" in c) $("o-bnr").value = c.bert_nr_topics === "lda" ? "lda" : "auto";
+  if ("mcs_sensitivity" in c) $("o-mcssens").checked = !!c.mcs_sensitivity;
+  if ("keep_unknown_year" in c) $("o-unk-year").checked = !c.keep_unknown_year;
+  const setChips = (id, vals, keepUnk) => {
+    $(id).querySelectorAll("input").forEach((i) => {
+      if (i.value === "__unknown__") { if (keepUnk !== undefined) i.checked = !!keepUnk; }
+      else if (Array.isArray(vals)) i.checked = vals.includes(i.value);
+    });
+  };
+  setChips("o-dt", c.doc_types, c.keep_unknown_type);
+  setChips("o-la", c.languages, c.keep_unknown_language);
+  if (Array.isArray(c.wos_indexes)) $("q-idx").querySelectorAll("input").forEach((i) => { i.checked = c.wos_indexes.includes(i.value); });
+  if (Array.isArray(c.analyses)) $("analyses").querySelectorAll("input").forEach((i) => { i.checked = c.analyses.includes(i.value); });
+  if (c.palette) {
+    const v = c.palette === "auto" ? "auto" : `${c.palette}:${Number(c.palette_variant) || 0}`;
+    setVal($("o-palette"), v);
+  }
+  $("o-ymin").dispatchEvent(new Event("input"));  // redibuja el bloque del periodo
+  requestEstimate();
+}
+
 function buildCfg() {
   const analyses = checked("analyses");
   return {
@@ -673,7 +725,7 @@ $("b-ai-translate").onclick = async () => {
   busy(true);
   toast("Traduciendo los nombres al inglés…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261134");
+    const ai = await import("./ai.js?v=20261135");
     const out = await ai.translateLabels(key, inputs.map((i) => i.value), $("m-topic").value.trim());
     out.forEach((t, i) => { if (inputs[i] && t) { setFull(inputs[i].closest(".lrow"), t); inputs[i].closest(".lrow").classList.remove("es"); } });
     state.aiLabels = true;
@@ -692,7 +744,7 @@ $("b-ai-short").onclick = async () => {
   busy(true);
   toast("Pidiendo nombres cortos a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261134");
+    const ai = await import("./ai.js?v=20261135");
     const out = await ai.shortenLabels(key, rows.map((r) => r.querySelector("input.full").value), $("m-topic").value.trim());
     out.forEach((t, i) => {
       const sh = rows[i] && rows[i].querySelector("input.short");
@@ -713,7 +765,7 @@ $("b-ai-labels").onclick = async () => {
   busy(true);
   toast("Pidiendo propuestas de nombres a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261134");
+    const ai = await import("./ai.js?v=20261135");
     const ctx = await getContext();
     const out = await ai.suggestLabels(key, ctx, $("m-topic").value.trim());
     const byId = Object.fromEntries(out.map((t) => [t.id, t]));
@@ -740,7 +792,7 @@ $("b-ai-disc").onclick = async () => {
   out.hidden = false;
   out.textContent = "Redactando la Discusión (puede tardar 1–3 minutos)…";
   try {
-    const ai = await import("./ai.js?v=20261134");
+    const ai = await import("./ai.js?v=20261135");
     const ctx = await getContext();
     const meta = { topic_name: $("m-topic").value.trim() };
     const text = await ai.draftDiscussion(key, ctx, meta, (snap) => { out.textContent = snap; });
@@ -800,7 +852,7 @@ $("b-ai-titles").onclick = async () => {
   busy(true);
   toast("Pidiendo propuestas de título a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261134");
+    const ai = await import("./ai.js?v=20261135");
     const ctx = await getContext();
     const out = await ai.suggestTitles(key, ctx, titleMeta());
     state.aiModel = ai.MODEL;
@@ -917,9 +969,12 @@ worker.onmessage = ({ data: m }) => {
       toast(m.msg, 9000);
       break;
     case "project":
+      if (m.summary) { state.summary = m.summary; showSummary(m.summary); }
+      applyCfg(m.cfg || {});
       $("s-analyses").hidden = false;
       $("run-status").hidden = false;
-      toast("Proyecto abierto.");
+      toast("Proyecto abierto con su configuración. Si cambia el periodo u otra opción, pulse «Ejecutar análisis» "
+        + "para recalcular los resultados con los datos guardados en el proyecto (no hace falta volver a cargar los archivos).", 12000);
       break;
     case "validation": {
       const r = m.result;

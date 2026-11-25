@@ -12,6 +12,13 @@ Cambios posteriores a la 2.0.0, a partir de las observaciones de árbitros. `run
   quedan fuera. El periodo se aplica a todos los análisis, figura en el PRISMA y en Métodos como criterio de
   elegibilidad («año de publicación entre … y …»).
 
+### Proyectos guardados
+
+- Al abrir un proyecto (`.bibliotopic`) el formulario recupera su configuración (periodo, K, semilla, réplicas,
+  pruebas, tipos de documento, idiomas, análisis…) y el resumen del corpus (bloque del periodo incluido). Así se puede
+  cambiar una opción, por ejemplo excluir el año siguiente, y pulsar «Ejecutar análisis» sin volver a cargar los
+  archivos; el resto de opciones se mantienen. Antes el formulario quedaba con los valores por defecto.
+
 ### Correcciones de esta versión
 
 - La leyenda de la figura de tendencias nombra la prueba que realmente clasificó los temas (Mann-Kendall con corrección de Hamed-Rao, Mann-Kendall clásico u OLS); antes decía siempre Hamed-Rao.

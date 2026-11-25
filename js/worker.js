@@ -180,7 +180,7 @@ class LdaPool {
     });
     const tries = [];
     for (let i = 0; i < this.n; i++) {
-      tries.push(boot(new Worker(new URL("./lda_worker.js?v=20261134", import.meta.url), { type: "module" })));
+      tries.push(boot(new Worker(new URL("./lda_worker.js?v=20261135", import.meta.url), { type: "module" })));
     }
     const res = await Promise.allSettled(tries);
     this.workers = res.filter((r) => r.status === "fulfilled").map((r) => r.value);
@@ -426,7 +426,9 @@ async function openProject(data) {
   py.globals.set("_proj", data);
   await py.runPythonAsync("S = pipeline.Session.load_project(_proj.to_bytes())");
   const cfg = JSON.parse(py.runPython("json.dumps(S.cfg, default=str)"));
-  post("project", { cfg });
+  let summary = null;  // corpus fusionado guardado en el proyecto: permite cambiar opciones y volver a ejecutar
+  try { summary = JSON.parse(py.runPython("json.dumps(S.summary(), ensure_ascii=False, default=str)")); } catch (e) { summary = null; }
+  post("project", { cfg, summary });
   await render();
   post("done", { elapsed: 0 });
 }

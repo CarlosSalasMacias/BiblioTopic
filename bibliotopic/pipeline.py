@@ -266,10 +266,14 @@ class Session:
         self.merge_stats["formats"] = fmts
         self.input_files = [name for name, _ in files]
         self.availability = bio.field_availability(self.merged)
+        return self.summary(errors)
+
+    def summary(self, errors=()):
+        """Resumen del corpus fusionado para la interfaz (también al abrir un proyecto guardado)."""
         m = self.merged
         yrs = m["PY"].dropna().astype(int)
         return {
-            "ok": True, "errors": errors, "stats": self.merge_stats,
+            "ok": True, "errors": list(errors), "stats": self.merge_stats,
             "availability": {k: round(100 * v, 1) for k, v in self.availability.items()},
             "with_abstract": int((m["AB"].str.len() > 0).sum()),
             "year_min": int(yrs.min()), "year_max": int(yrs.max()),
