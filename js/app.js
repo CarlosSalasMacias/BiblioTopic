@@ -1,6 +1,6 @@
 // BiblioTopic — interfaz (hilo principal). El trabajo pesado ocurre en js/worker.js.
 const $ = (id) => document.getElementById(id);
-const worker = new Worker(new URL("./worker.js?v=20261135", import.meta.url), { type: "module" });
+const worker = new Worker(new URL("./worker.js?v=20261136", import.meta.url), { type: "module" });
 const state = { analyses: {}, sections: {}, summary: null, labels: null, busy: false, aiLabels: false, aiModel: "" };
 
 const DEPENDS = { compare: ["lda", "bertopic"], inference: ["compare", "lda", "bertopic"], strategic: ["lda"],
@@ -58,7 +58,7 @@ function runClockStart() {
       $("watchdog").hidden = false;
       $("watchdog").innerHTML = `<b>El análisis no informa avances desde hace ${fmtDur(quiet)}.</b> Puede haberse detenido.
         Compruébelo con Shift + Esc (Administrador de tareas del navegador): si BiblioTopic usa 0 % de CPU, recargue
-        la página y use «Recuperar el último análisis» para repetir solo las figuras.`;
+        la página. Si LDA ya había terminado, aparecerá «Continuar el análisis» y LDA no se repite.`;
     } else $("watchdog").hidden = true;
   }, 1000);
 }
@@ -111,16 +111,22 @@ async function showRecover() {
   if (!ck || !ck.data) return;
   const box = $("recover");
   box.hidden = false;
-  box.innerHTML = `Hay un análisis guardado automáticamente el ${new Date(ck.when).toLocaleString()} (modelos ya
-    ajustados). <button type="button" id="b-recover">Recuperar el último análisis</button>
-    <span class="hint">Solo se vuelven a generar las figuras y tablas.</span>`;
+  const partial = ck.stage === "lda";
+  box.innerHTML = partial
+    ? `Hay un análisis interrumpido, guardado automáticamente el ${new Date(ck.when).toLocaleString()} con LDA ya
+      ajustado. <button type="button" id="b-recover">Continuar el análisis</button>
+      <span class="hint">Se ejecutan BERTopic, la comparación y las figuras con la misma configuración; LDA no se repite.</span>`
+    : `Hay un análisis guardado automáticamente el ${new Date(ck.when).toLocaleString()} (modelos ya
+      ajustados). <button type="button" id="b-recover">Recuperar el último análisis</button>
+      <span class="hint">Solo se vuelven a generar las figuras y tablas.</span>`;
   $("b-recover").onclick = () => {
     if (state.busy || !$("env").classList.contains("ready")) return toast("Espere a que el entorno esté listo.");
     busy(true);
     $("run-status").hidden = false;
     $("stage").textContent = "Recuperando el análisis guardado…";
     const data = new Uint8Array(ck.data);
-    worker.postMessage({ cmd: "open_project", data }, [data.buffer]);
+    if (partial) { runClockStart(); worker.postMessage({ cmd: "resume_checkpoint", data }, [data.buffer]); }
+    else worker.postMessage({ cmd: "open_project", data }, [data.buffer]);
     box.hidden = true;
   };
 }
@@ -351,6 +357,8 @@ $("b-run").onclick = () => {
   }
   if (cfg.k_min >= cfg.k_max && !cfg.k) return toast("K mínimo debe ser menor que K máximo.");
   busy(true);
+  idbPut("checkpoint", null);  // un análisis nuevo invalida el punto de control anterior
+  $("recover").hidden = true;
   runClockStart();
   $("run-status").hidden = false;
   $("stage").textContent = "Iniciando…";
@@ -725,7 +733,7 @@ $("b-ai-translate").onclick = async () => {
   busy(true);
   toast("Traduciendo los nombres al inglés…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261135");
+    const ai = await import("./ai.js?v=20261136");
     const out = await ai.translateLabels(key, inputs.map((i) => i.value), $("m-topic").value.trim());
     out.forEach((t, i) => { if (inputs[i] && t) { setFull(inputs[i].closest(".lrow"), t); inputs[i].closest(".lrow").classList.remove("es"); } });
     state.aiLabels = true;
@@ -744,7 +752,7 @@ $("b-ai-short").onclick = async () => {
   busy(true);
   toast("Pidiendo nombres cortos a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261135");
+    const ai = await import("./ai.js?v=20261136");
     const out = await ai.shortenLabels(key, rows.map((r) => r.querySelector("input.full").value), $("m-topic").value.trim());
     out.forEach((t, i) => {
       const sh = rows[i] && rows[i].querySelector("input.short");
@@ -765,7 +773,7 @@ $("b-ai-labels").onclick = async () => {
   busy(true);
   toast("Pidiendo propuestas de nombres a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261135");
+    const ai = await import("./ai.js?v=20261136");
     const ctx = await getContext();
     const out = await ai.suggestLabels(key, ctx, $("m-topic").value.trim());
     const byId = Object.fromEntries(out.map((t) => [t.id, t]));
@@ -792,7 +800,7 @@ $("b-ai-disc").onclick = async () => {
   out.hidden = false;
   out.textContent = "Redactando la Discusión (puede tardar 1–3 minutos)…";
   try {
-    const ai = await import("./ai.js?v=20261135");
+    const ai = await import("./ai.js?v=20261136");
     const ctx = await getContext();
     const meta = { topic_name: $("m-topic").value.trim() };
     const text = await ai.draftDiscussion(key, ctx, meta, (snap) => { out.textContent = snap; });
@@ -852,7 +860,7 @@ $("b-ai-titles").onclick = async () => {
   busy(true);
   toast("Pidiendo propuestas de título a Claude…", 15000);
   try {
-    const ai = await import("./ai.js?v=20261135");
+    const ai = await import("./ai.js?v=20261136");
     const ctx = await getContext();
     const out = await ai.suggestTitles(key, ctx, titleMeta());
     state.aiModel = ai.MODEL;
@@ -937,7 +945,8 @@ worker.onmessage = ({ data: m }) => {
       showEstimate(m.estimate);
       break;
     case "checkpoint":
-      idbPut("checkpoint", { when: Date.now(), data: m.data.buffer.slice(m.data.byteOffset, m.data.byteOffset + m.data.byteLength) });
+      idbPut("checkpoint", { when: Date.now(), stage: m.stage || "models",
+        data: m.data.buffer.slice(m.data.byteOffset, m.data.byteOffset + m.data.byteLength) });
       break;
     case "palette":
       showPalette(m.palette);
@@ -973,7 +982,7 @@ worker.onmessage = ({ data: m }) => {
       applyCfg(m.cfg || {});
       $("s-analyses").hidden = false;
       $("run-status").hidden = false;
-      toast("Proyecto abierto con su configuración. Si cambia el periodo u otra opción, pulse «Ejecutar análisis» "
+      if (!m.resumed) toast("Proyecto abierto con su configuración. Si cambia el periodo u otra opción, pulse «Ejecutar análisis» "
         + "para recalcular los resultados con los datos guardados en el proyecto (no hace falta volver a cargar los archivos).", 12000);
       break;
     case "validation": {
@@ -1015,7 +1024,7 @@ worker.onmessage = ({ data: m }) => {
         runClockStop();
         $("watchdog").hidden = false;
         $("watchdog").innerHTML = `<b>El análisis se detuvo por un error:</b> ${escH(m.msg).slice(0, 600)}<br>
-          Si ya se habían ajustado los modelos, recargue la página y use «Recuperar el último análisis».`;
+          Recargue la página: si LDA ya había terminado, aparecerá «Continuar el análisis» y LDA no se repite.`;
       }
       break;
   }
@@ -1025,7 +1034,7 @@ worker.onerror = (e) => {
     runClockStop();
     $("watchdog").hidden = false;
     $("watchdog").innerHTML = `<b>El proceso del análisis se detuvo</b> (${escH(e.message || "error del navegador")}).
-      Recargue la página; si los modelos ya estaban ajustados, use «Recuperar el último análisis».`;
+      Recargue la página: si LDA ya había terminado, aparecerá «Continuar el análisis» y LDA no se repite.`;
   }
   $("env-msg").textContent = "No se pudo iniciar el entorno: " + (e.message || "error desconocido");
   console.error(e);

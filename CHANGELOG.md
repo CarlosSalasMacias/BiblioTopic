@@ -19,6 +19,16 @@ Cambios posteriores a la 2.0.0, a partir de las observaciones de árbitros. `run
   cambiar una opción, por ejemplo excluir el año siguiente, y pulsar «Ejecutar análisis» sin volver a cargar los
   archivos; el resto de opciones se mantienen. Antes el formulario quedaba con los valores por defecto.
 
+### Análisis largos: descarga del modelo y punto de control tras LDA
+
+- La descarga de la librería de embeddings y del modelo de lenguaje tiene un límite: si no llega ningún dato durante
+  3 minutos se reintenta una vez y, si vuelve a ocurrir, el análisis se detiene con un mensaje claro. Antes podía
+  quedarse esperando indefinidamente con «quedan menos de 2 min».
+- Punto de control al terminar LDA (además del que ya había tras BERTopic). Si BERTopic falla o se cuelga, al
+  recargar la página aparece «Continuar el análisis», que ejecuta BERTopic, la comparación y las figuras con la misma
+  configuración sin repetir LDA.
+- Un análisis nuevo borra el punto de control anterior, para no recuperar por error un análisis distinto.
+
 ### Correcciones de esta versión
 
 - La leyenda de la figura de tendencias nombra la prueba que realmente clasificó los temas (Mann-Kendall con corrección de Hamed-Rao, Mann-Kendall clásico u OLS); antes decía siempre Hamed-Rao.

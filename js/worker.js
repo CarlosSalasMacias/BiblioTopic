@@ -108,17 +108,66 @@ const EMB_MODELS = {
   "Xenova/all-mpnet-base-v2": { label: "all-mpnet-base-v2", size: "~440 MB" },
 };
 
+// Descarga del modelo con vigilancia: si no llega ningún dato durante STALL_MS (red caída, servidor de modelos
+// sin respuesta), se reintenta una vez y, si vuelve a ocurrir, el análisis se detiene con un mensaje claro en lugar
+// de quedar esperando indefinidamente. LDA ya quedó guardado en el punto de control.
+const STALL_MS = 3 * 60 * 1000;
+function stallError(info) {
+  const err = new Error(`La descarga del modelo de lenguaje (${info.label}) no avanzó durante 3 minutos, dos veces. `
+    + "Compruebe la conexión a internet (la librería se descarga de cdn.jsdelivr.net y el modelo de huggingface.co "
+    + "la primera vez), recargue la página y pulse «Continuar el análisis»: LDA ya está guardado y no se repite.");
+  err.fatal = true;
+  return err;
+}
+async function importWithTimeout(info) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    let timer = null;
+    const stall = new Promise((_, rej) => { timer = setTimeout(() => rej(new Error("STALL")), STALL_MS); });
+    try {
+      // un parámetro distinto en el reintento evita reutilizar una petición colgada
+      return await Promise.race([import(attempt === 1 ? TRANSFORMERS_URL : `${TRANSFORMERS_URL}?retry=${Date.now()}`), stall]);
+    } catch (e) {
+      if (String(e.message) !== "STALL") throw e;
+      if (attempt === 2) throw stallError(info);
+      progress(0, `La descarga de la librería de embeddings no avanza; reintentando…`);
+    } finally { clearTimeout(timer); }
+  }
+}
+async function loadExtractor(pipeline, model, device, info) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    let last = Date.now(), timer = null;
+    const cb = (p) => {
+      last = Date.now();
+      if (p && p.status === "progress" && p.total) {
+        progress(p.loaded / p.total, `Descargando el modelo de lenguaje (${info.label}): `
+          + `${(p.loaded / 1e6).toFixed(0)} de ${(p.total / 1e6).toFixed(0)} MB${attempt > 1 ? " · segundo intento" : ""}`);
+      }
+    };
+    const stall = new Promise((_, rej) => {
+      timer = setInterval(() => { if (Date.now() - last > STALL_MS) rej(new Error("STALL")); }, 5000);
+    });
+    try {
+      return await Promise.race([
+        pipeline("feature-extraction", model, { device, dtype: "fp32", progress_callback: cb }), stall]);
+    } catch (e) {
+      if (String(e.message) !== "STALL") throw e;
+      if (attempt === 2) throw stallError(info);
+      progress(0, `La descarga del modelo no avanza; reintentando (${info.label})…`);
+    } finally { clearInterval(timer); }
+  }
+}
+
 async function embed(texts, model = EMB_MODEL) {
   const info = EMB_MODELS[model] || { label: model, size: "" };
   try {
     progress(0.0, `Descargando el modelo de lenguaje (${info.label}, ${info.size} la primera vez)…`);
-    const { pipeline, env } = await import(TRANSFORMERS_URL);
+    const { pipeline, env } = await importWithTimeout(info);
     env.allowLocalModels = false;
     let device = "wasm";
     if (self.navigator?.gpu) {
       try { if (await navigator.gpu.requestAdapter()) device = "webgpu"; } catch (e) { /* wasm */ }
     }
-    const extractor = await pipeline("feature-extraction", model, { device, dtype: "fp32" });
+    const extractor = await loadExtractor(pipeline, model, device, info);
     const n = texts.length, bs = 32;
     let dim = 0, out = null;
     for (let i = 0; i < n; i += bs) {
@@ -130,6 +179,7 @@ async function embed(texts, model = EMB_MODEL) {
     }
     return { data: out, dim, name: `${info.label} (sentence-transformers, ONNX vía transformers.js)` };
   } catch (e) {
+    if (e.fatal) throw e;  // descarga colgada: detener y continuar después desde el punto de control
     post("warn", { msg: "No se pudo usar el modelo de lenguaje (" + e.message + "). Se usa LSA (TF-IDF + SVD)." });
     const arr = await py.runPythonAsync(`_e = lsa_embeddings(S.texts()); _e.tobytes()`);
     const dim = py.runPython("_e.shape[1]");
@@ -180,7 +230,7 @@ class LdaPool {
     });
     const tries = [];
     for (let i = 0; i < this.n; i++) {
-      tries.push(boot(new Worker(new URL("./lda_worker.js?v=20261135", import.meta.url), { type: "module" })));
+      tries.push(boot(new Worker(new URL("./lda_worker.js?v=20261136", import.meta.url), { type: "module" })));
     }
     const res = await Promise.allSettled(tries);
     this.workers = res.filter((r) => r.status === "fulfilled").map((r) => r.value);
@@ -301,6 +351,39 @@ async function run(cfg) {
   } else {
     (await poolP)?.terminate();
   }
+  // punto de control intermedio: LDA puede tardar horas; si BERTopic falla o se cuelga, el análisis puede
+  // continuar desde aquí sin repetir LDA
+  if (on("lda") && on("bertopic")) await checkpoint("lda");
+  await continueAfterLda(cfg, t0, stage);
+}
+
+async function checkpoint(kind) {
+  try {
+    progress(1, "Guardando un punto de control del análisis…");
+    const bytes = pyBytes(await py.runPythonAsync("S.save_project()"));
+    post("checkpoint", { data: bytes, stage: kind }, [bytes.buffer]);
+  } catch (e) { /* el punto de control es opcional */ }
+}
+
+// Continúa un análisis desde el punto de control posterior a LDA (BERTopic, figuras y tablas)
+async function resumeCheckpoint(data) {
+  const t0 = Date.now();
+  const stage = (s) => post("stage", { stage: s, elapsed: (Date.now() - t0) / 1000 });
+  stage("Recuperando el análisis guardado (LDA ya ajustado)…");
+  py.globals.set("_proj", data);
+  await py.runPythonAsync("S = pipeline.Session.load_project(_proj.to_bytes())");
+  const cfg = JSON.parse(py.runPython("json.dumps(S.cfg, default=str)"));
+  let summary = null;
+  try { summary = JSON.parse(py.runPython("json.dumps(S.summary(), ensure_ascii=False, default=str)")); } catch (e) { summary = null; }
+  post("project", { cfg, summary, resumed: true });
+  const plan = JSON.parse(py.runPython("json.dumps(S.run_plan())"));
+  plan.prep = 0; plan.lda = 0;
+  trackStart(plan);
+  await continueAfterLda(cfg, t0, stage);
+}
+
+async function continueAfterLda(cfg, t0, stage) {
+  const on = (a) => cfg.analyses.includes(a);
   if (on("bertopic")) {
     trackStage("embed");
     stage("BERTopic: embeddings de los documentos");
@@ -338,11 +421,7 @@ _bt = S.run_bertopic(_reds, _xy2, _emb_name)
   }
   // punto de control: los modelos ya están ajustados; si algo falla al generar las figuras, el proyecto
   // guardado permite repetir solo esta última etapa
-  try {
-    progress(1, "Guardando un punto de control del análisis…");
-    const bytes = pyBytes(await py.runPythonAsync("S.save_project()"));
-    post("checkpoint", { data: bytes }, [bytes.buffer]);
-  } catch (e) { /* el punto de control es opcional */ }
+  await checkpoint("models");
   trackStage("render");
   stage("Generando figuras y tablas");
   progress(0.01, "Preparando figuras y tablas…");
@@ -488,6 +567,7 @@ self.onmessage = async (ev) => {
     else if (cmd === "labels") await setLabels(ev.data.labels, ev.data.aiUsed);
     else if (cmd === "save_project") await saveProject();
     else if (cmd === "open_project") await openProject(ev.data.data);
+    else if (cmd === "resume_checkpoint") await resumeCheckpoint(ev.data.data);
     else if (cmd === "val_sheet") await validationSheet();
     else if (cmd === "val_load") await validationLoad(ev.data.files);
     else if (cmd === "ai_context") await aiContext();
