@@ -27,6 +27,7 @@ Cambios posteriores a la 2.0.0, a partir de las observaciones de árbitros. `run
 - Punto de control al terminar LDA (además del que ya había tras BERTopic). Si BERTopic falla o se cuelga, al
   recargar la página aparece «Continuar el análisis», que ejecuta BERTopic, la comparación y las figuras con la misma
   configuración sin repetir LDA.
+- Al abrir un proyecto guardado con LDA ajustado pero sin BERTopic, el análisis continúa desde ese punto.
 - Un análisis nuevo borra el punto de control anterior, para no recuperar por error un análisis distinto.
 
 ### Correcciones de esta versión

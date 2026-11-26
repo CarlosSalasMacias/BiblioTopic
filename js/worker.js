@@ -230,7 +230,7 @@ class LdaPool {
     });
     const tries = [];
     for (let i = 0; i < this.n; i++) {
-      tries.push(boot(new Worker(new URL("./lda_worker.js?v=20261136", import.meta.url), { type: "module" })));
+      tries.push(boot(new Worker(new URL("./lda_worker.js?v=20261137", import.meta.url), { type: "module" })));
     }
     const res = await Promise.allSettled(tries);
     this.workers = res.filter((r) => r.status === "fulfilled").map((r) => r.value);
@@ -507,6 +507,19 @@ async function openProject(data) {
   const cfg = JSON.parse(py.runPython("json.dumps(S.cfg, default=str)"));
   let summary = null;  // corpus fusionado guardado en el proyecto: permite cambiar opciones y volver a ejecutar
   try { summary = JSON.parse(py.runPython("json.dumps(S.summary(), ensure_ascii=False, default=str)")); } catch (e) { summary = null; }
+  // proyecto guardado con LDA ajustado pero sin BERTopic (análisis interrumpido): se continúa desde ahí
+  const partial = cfg.analyses && cfg.analyses.includes("bertopic")
+    && py.runPython("getattr(S, 'bert', None) is None and getattr(S, 'lda', None) is not None");
+  if (partial) {
+    post("project", { cfg, summary, resumed: true, partial: true });
+    const t0 = Date.now();
+    const stage = (s_) => post("stage", { stage: s_, elapsed: (Date.now() - t0) / 1000 });
+    const plan = JSON.parse(py.runPython("json.dumps(S.run_plan())"));
+    plan.prep = 0; plan.lda = 0;
+    trackStart(plan);
+    await continueAfterLda(cfg, t0, stage);
+    return;
+  }
   post("project", { cfg, summary });
   await render();
   post("done", { elapsed: 0 });
