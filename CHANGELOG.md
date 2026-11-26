@@ -24,6 +24,9 @@ Cambios posteriores a la 2.0.0, a partir de las observaciones de árbitros. `run
 - La descarga de la librería de embeddings y del modelo de lenguaje tiene un límite: si no llega ningún dato durante
   3 minutos se reintenta una vez y, si vuelve a ocurrir, el análisis se detiene con un mensaje claro. Antes podía
   quedarse esperando indefinidamente con «quedan menos de 2 min».
+- Si la tarjeta gráfica falla al calcular los embeddings (WebGPU: «Device was lost», DXGI_ERROR_DEVICE_HUNG en
+  Windows) o un lote no termina en 3 minutos, los embeddings se repiten en la CPU con el mismo modelo, con un aviso.
+  Antes el análisis quedaba esperando indefinidamente.
 - Punto de control al terminar LDA (además del que ya había tras BERTopic). Si BERTopic falla o se cuelga, al
   recargar la página aparece «Continuar el análisis», que ejecuta BERTopic, la comparación y las figuras con la misma
   configuración sin repetir LDA.

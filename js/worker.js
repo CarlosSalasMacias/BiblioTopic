@@ -157,6 +157,41 @@ async function loadExtractor(pipeline, model, device, info) {
   }
 }
 
+// Errores de la GPU que llegan como promesas no capturadas (p. ej., «Device was lost» tras DXGI_ERROR_DEVICE_HUNG
+// en Windows): se registran para abandonar WebGPU y repetir los embeddings en la CPU (WebAssembly).
+let GPU_LOST = null;
+self.addEventListener("unhandledrejection", (ev) => {
+  const msg = String(ev.reason && (ev.reason.message || ev.reason) || "");
+  if (/GPU|device was lost|mapAsync|webgpu/i.test(msg)) { GPU_LOST = msg; ev.preventDefault(); }
+});
+
+// Tiempo máximo sin terminar un lote de embeddings antes de considerar que el cálculo se colgó
+const BATCH_STALL_MS = 3 * 60 * 1000;
+
+async function embedWith(extractor, texts, device) {
+  const n = texts.length, bs = 32;
+  let dim = 0, out = null;
+  progress(0, `Embeddings 0 / ${n} (${device})`);
+  for (let i = 0; i < n; i += bs) {
+    const batch = texts.slice(i, i + bs);
+    let timer = null;
+    const guard = new Promise((_, rej) => {
+      const t0 = Date.now();
+      timer = setInterval(() => {
+        if (GPU_LOST) rej(new Error("GPU_LOST: " + GPU_LOST));
+        else if (Date.now() - t0 > BATCH_STALL_MS) rej(new Error("BATCH_STALL"));
+      }, 2000);
+    });
+    let t;
+    try { t = await Promise.race([extractor(batch, { pooling: "mean", normalize: true }), guard]); }
+    finally { clearInterval(timer); }
+    if (!out) { dim = t.dims[t.dims.length - 1]; out = new Float32Array(n * dim); }
+    out.set(t.data, i * dim);
+    progress(Math.min(i + bs, n) / n, `Embeddings ${Math.min(i + bs, n)} / ${n} (${device})`);
+  }
+  return { out, dim };
+}
+
 async function embed(texts, model = EMB_MODEL) {
   const info = EMB_MODELS[model] || { label: model, size: "" };
   try {
@@ -167,19 +202,32 @@ async function embed(texts, model = EMB_MODEL) {
     if (self.navigator?.gpu) {
       try { if (await navigator.gpu.requestAdapter()) device = "webgpu"; } catch (e) { /* wasm */ }
     }
-    const extractor = await loadExtractor(pipeline, model, device, info);
-    const n = texts.length, bs = 32;
-    let dim = 0, out = null;
-    for (let i = 0; i < n; i += bs) {
-      const batch = texts.slice(i, i + bs);
-      const t = await extractor(batch, { pooling: "mean", normalize: true });
-      if (!out) { dim = t.dims[t.dims.length - 1]; out = new Float32Array(n * dim); }
-      out.set(t.data, i * dim);
-      progress(i / n, `Embeddings ${Math.min(i + bs, n)} / ${n} (${device})`);
+    let res, gpuNote = "";
+    GPU_LOST = null;
+    try {
+      const extractor = await loadExtractor(pipeline, model, device, info);
+      res = await embedWith(extractor, texts, device);
+    } catch (e) {
+      if (device !== "webgpu" || e.fatal) throw e;
+      // la GPU falló o se colgó: se repiten todos los embeddings en la CPU (mismo modelo, resultados coherentes)
+      gpuNote = String(e.message || e).slice(0, 160);
+      post("warn", { msg: "La tarjeta gráfica (WebGPU) falló o dejó de responder al calcular los embeddings; se "
+        + "repiten en la CPU (más lento, mismo modelo)." });
+      device = "wasm";
+      GPU_LOST = null;
+      const extractor = await loadExtractor(pipeline, model, device, info);
+      res = await embedWith(extractor, texts, device);
     }
-    return { data: out, dim, name: `${info.label} (sentence-transformers, ONNX vía transformers.js)` };
+    return { data: res.out, dim: res.dim,
+      name: `${info.label} (sentence-transformers, ONNX vía transformers.js)`, device, gpuNote };
   } catch (e) {
     if (e.fatal) throw e;  // descarga colgada: detener y continuar después desde el punto de control
+    if (/BATCH_STALL/.test(String(e.message))) {
+      const err = new Error("El cálculo de los embeddings dejó de avanzar durante 3 minutos. Recargue la página y pulse "
+        + "«Continuar el análisis» (LDA ya está guardado y no se repite).");
+      err.fatal = true;
+      throw err;
+    }
     post("warn", { msg: "No se pudo usar el modelo de lenguaje (" + e.message + "). Se usa LSA (TF-IDF + SVD)." });
     const arr = await py.runPythonAsync(`_e = lsa_embeddings(S.texts()); _e.tobytes()`);
     const dim = py.runPython("_e.shape[1]");
@@ -230,7 +278,7 @@ class LdaPool {
     });
     const tries = [];
     for (let i = 0; i < this.n; i++) {
-      tries.push(boot(new Worker(new URL("./lda_worker.js?v=20261137", import.meta.url), { type: "module" })));
+      tries.push(boot(new Worker(new URL("./lda_worker.js?v=20261138", import.meta.url), { type: "module" })));
     }
     const res = await Promise.allSettled(tries);
     this.workers = res.filter((r) => r.status === "fulfilled").map((r) => r.value);
